@@ -23,13 +23,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-import core.stdc.stdlib : malloc, free;
-import core.exception;
-
-import std.typecons;
 import std.traits;
-import std.conv;
-import std.functional;
 
 
 /**
