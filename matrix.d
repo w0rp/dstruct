@@ -121,7 +121,7 @@ public:
 
     @safe pure nothrow
     Matrix!Number dup() const {
-        auto mat = new Matrix!Number();
+        auto mat = new Matrix!Number;
 
         // We can't .dup in a nothrow function, but we can do this...
         mat._data = new Number[](_rowCount * _columnCount);
@@ -133,9 +133,37 @@ public:
         return mat;
     }
 
+    /**
+     * Returns: A new immutable duplicate of this matrix.
+     */
     @safe pure nothrow
     immutable(Matrix!Number) idup() const {
         return dup;
+    }
+
+    /**
+     * When calling .idup on an already immutable matrix, the reference
+     * to the same immutable matrix is returned. It should be safe to
+     * share the immutable memory in this manner.
+     *
+     * Returns: A reference to this immutable matrix.
+     */
+    @safe pure nothrow
+    immutable(Matrix!Number) idup() immutable {
+        // There's no need to copy immutable to immutable, share it!
+        return this;
+    }
+
+    unittest {
+        auto m = new immutable Matrix!int;
+
+        // Make sure this doesn't actually duplicate.
+        assert(m.idup is m);
+
+        auto o = new Matrix!int;
+
+        // Make sure this still does.
+        assert(o.idup !is o);
     }
 
     /// Returns: True if the matrix is empty.
@@ -416,21 +444,31 @@ unittest {
 
 final class Rows(Number) if(isNumeric!Number) {
 private:
-    Matrix!Number _matrix;
+    const Matrix!Number _matrix;
     size_t _currentRow;
+    size_t _upperBound;
+
+    // A private constructor used for saving the range.
+    @safe pure nothrow
+    this(const Matrix!Number matrix, size_t currentRow, size_t upperBound) {
+        _matrix = matrix;
+        _currentRow = currentRow;
+        _upperBound = upperBound;
+    }
 public:
     /**
      * Create a new rows range for a given matrix.
      */
     @safe pure nothrow
-    this(Matrix!Number matrix) {
+    this(const Matrix!Number matrix) {
         _matrix = matrix;
+        _upperBound = _matrix.rowCount;
     }
 
     /// Returns: true if the range is empty.
     @safe pure nothrow
     @property bool empty() const {
-        return _currentRow >= _matrix.rowCount;
+        return _currentRow >= _upperBound;
     }
 
     /// Advance to the next row.
@@ -447,6 +485,46 @@ public:
         assert(!empty, "Cannot get the front of an empty Rows range!");
 
         return _matrix[_currentRow];
+    }
+
+    /// Save a copy of this range.
+    @safe pure nothrow
+    Rows!Number save() const {
+        return new Rows!Number(_matrix, _currentRow, _upperBound);
+    }
+
+    /// Retreat a row backwards.
+    @safe pure nothrow
+    void popBack() {
+        assert(!empty, "Attempted popBack on an empty Rows range!");
+
+        --_upperBound;
+    }
+
+    /// Returns: The row at the end of the range.
+    @safe pure nothrow
+    @property const(Number[]) back() const {
+        return _matrix[_upperBound - 1];
+    }
+
+    /**
+     * Params:
+     *     index = An index for a row in the range.
+     *
+     * Returns: A row at an index in the range.
+     */
+    @safe pure nothrow
+    @property const(Number[]) opIndex(size_t index) const in {
+        assert(index >= 0, "Negative index given to Rows opIndex!");
+        assert(index < length, "Out of bounds index given to Rows opIndex!");
+    } body {
+        return _matrix[_currentRow + index];
+    }
+
+    /// Returns: The current length of the range.
+    @safe pure nothrow
+    @property size_t length() const {
+        return _upperBound - _currentRow;
     }
 }
 
@@ -473,7 +551,38 @@ unittest {
 
     size_t rowIndex = 0;
 
+    // Test InputRange stuff
     for (auto range = mat.rows; !range.empty; range.popFront) {
         assert(range.front == expected[rowIndex++]);
     }
+
+    // Test ForwardRange
+
+    auto range1 = mat.rows;
+
+    range1.popFront;
+    range1.popBack;
+
+    auto range2 = range1.save;
+
+    range1.popFront;
+
+    assert(range2.front == [4, 5, 6]);
+
+    rowIndex = 3;
+
+    // Test BidirectionalRange
+    for (auto range = mat.rows; !range.empty; range.popBack) {
+        assert(range.back == expected[--rowIndex]);
+    }
+
+    // Test RandomAccessRange
+
+    auto range3 = mat.rows;
+
+    range3.popFront;
+    range3.popBack;
+
+    assert(range3.length == 1);
+    assert(range3[0] == [4, 5, 6]);
 }
