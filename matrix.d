@@ -23,8 +23,15 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-import std.traits;
+/**
+ * This module defines a matrix data structure and various operations
+ * on this data structure. All operations are @safe pure nothrow,
+ * so they can be used in any such function, and the results of any
+ * operation can be implicitly converted to an immutable type.
+ */
+module matrix;
 
+import std.traits;
 
 /**
  * A matrix type. This is a 2D array of a guaranteed uniform size.
@@ -119,6 +126,9 @@ public:
         }
     }
 
+    /**
+     * Returns: A new duplicate of this matrix.
+     */
     @safe pure nothrow
     Matrix!Number dup() const {
         auto mat = new Matrix!Number;
@@ -184,6 +194,18 @@ public:
         return _columnCount;
     }
 
+    /// Returns: true if the matrix is a square matrix.
+    @safe pure nothrow
+    @property bool isSquare() const {
+        return _rowCount == _columnCount;
+    }
+
+    /**
+     * Params:
+     *    row = A row index.
+     *
+     * Returns: A const view of a matrix row.
+     */
     @trusted pure nothrow
     const(Number[]) opIndex(size_t row) const
     in {
@@ -195,7 +217,11 @@ public:
     }
 
     /**
-     * Returns: A value from the matrix.
+     * Params:
+     *    row = A row index.
+     *    column = A column index.
+     *
+     * Returns: A value from the matrix
      */
     @safe pure nothrow
     Number opIndex(size_t row, size_t column) const
@@ -239,12 +265,6 @@ public:
         return result;
     }
 
-    /// Returns: true if two matrices are equal.
-    @safe pure nothrow
-    bool opEquals(OtherNumber)(const Matrix!OtherNumber other) const
-    if (isNumeric!OtherNumber) {
-        return _data == other._data;
-    }
 
     /**
      * Modify this matrix, adding/subtracting values from another matrix.
@@ -256,13 +276,14 @@ public:
      * ---
      *
      * Params:
-     *     other = The other matrix.
+     *     other = Another matrix with an implicitly convertible numeric type.
      */
     @safe pure nothrow
     void opOpAssign(string op, OtherNumber)
     (const Matrix!OtherNumber other)
     if((op == "+" || op == "-") && is(OtherNumber : Number))
     in {
+        assert(other !is null);
         assert(this.rowCount == other.rowCount);
         assert(this.columnCount == other.columnCount);
     } body {
@@ -287,6 +308,7 @@ public:
     Matrix!Number opBinary(string op, OtherNumber)
     (const Matrix!OtherNumber other) const
     if((op == "+" || op == "-") && is(OtherNumber : Number)) in {
+        assert(other !is null);
         assert(this.rowCount == other.rowCount);
         assert(this.columnCount == other.columnCount);
     } out(val) {
@@ -299,6 +321,33 @@ public:
         mixin(`result ` ~ op ~ `= other;`);
 
         return result;
+    }
+
+    /**
+     * Multiply two matrices.
+     *
+     * Given a matrix of size (m, n) and a matrix of size (o, p).
+     * This operation can only work if n == o.
+     * The resulting matrix will be size (m, p).
+     *
+     * Params:
+     *     other = Another matrix
+     *
+     * Returns: The product of two matrices.
+     */
+    @safe pure nothrow
+    Matrix!Number opBinary(string op, OtherNumber)
+    (const Matrix!OtherNumber other) const
+    if((op == "*") && is(OtherNumber : Number)) in {
+        assert(other !is null);
+        assert(this.columnCount == other.rowCount);
+    } out(val) {
+        assert(val.rowCount == this.rowCount);
+        assert(val.columnCount == other.columnCount);
+    } body {
+        auto result = new Matrix!Number(this.rowCount, other.columnCount);
+
+
     }
 
     /**
@@ -329,8 +378,21 @@ public:
 
         return result;
     }
-}
 
+    /**
+     * Returns: true if two matrices are equal and have the same type.
+     */
+    override
+    @safe pure nothrow
+    bool opEquals(Object o) const {
+        auto other = cast(typeof(this)) o;
+
+        return other !is null
+            && _rowCount == other._rowCount
+            && _columnCount == other._columnCount
+            && _data == other._data;
+    }
+}
 
 // Test basic matrix initialisation and foreach.
 unittest {
@@ -442,6 +504,27 @@ unittest {
     runtest!">>>";
 }
 
+unittest {
+    // Test matrix equality.
+
+    auto left = new Matrix!int(3, 3, [
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9
+    ]);
+
+    auto right = new immutable Matrix!int(3, 3, [
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9
+    ]);
+
+    assert(left == right);
+}
+
+/**
+ * This class defines a range of rows over a matrix.
+ */
 final class Rows(Number) if(isNumeric!Number) {
 private:
     const Matrix!Number _matrix;
@@ -450,7 +533,10 @@ private:
 
     // A private constructor used for saving the range.
     @safe pure nothrow
-    this(const Matrix!Number matrix, size_t currentRow, size_t upperBound) {
+    this(const Matrix!Number matrix, size_t currentRow, size_t upperBound)
+    in {
+        assert(matrix !is null);
+    } body {
         _matrix = matrix;
         _currentRow = currentRow;
         _upperBound = upperBound;
@@ -529,7 +615,7 @@ public:
 }
 
 /**
- * Returns: A range through the matrix's rows.
+ * Returns: A range through a matrix's rows.
  */
 @safe pure nothrow
 Rows!Number rows(Number)(Matrix!Number matrix) {
@@ -585,4 +671,56 @@ unittest {
 
     assert(range3.length == 1);
     assert(range3[0] == [4, 5, 6]);
+}
+
+/**
+ * Transpose (flip) a matrix.
+ *
+ * Params:
+ *     matrix = The matrix to produce a transpose for.
+ *
+ * Returns: A new matrix which is the transpose of the given matrix.
+ */
+@safe pure nothrow
+Matrix!Number transpose(Number)(const Matrix!Number matrix)
+in {
+    assert(matrix !is null);
+} out(val) {
+    assert(matrix.columnCount == val.columnCount);
+    assert(matrix.rowCount == val.rowCount);
+} body {
+    auto result = new typeof(return)(matrix.columnCount, matrix.rowCount);
+
+    foreach(row; 0..matrix.rowCount) {
+        foreach(col; 0..matrix.columnCount) {
+            result[col, row] = matrix[row, col];
+        }
+    }
+
+    return result;
+}
+
+unittest {
+    auto matrix = new Matrix!int(2, 3, [
+        1, 2, 3,
+        0, -6, 7
+    ]);
+
+    int[] expected = [1, 0, 2, -6, 3, 7];
+
+    auto result = matrix.transpose;
+
+    assert(result.rowCount == matrix.columnCount);
+    assert(result.columnCount == matrix.rowCount);
+    assert(result._data == expected);
+}
+
+unittest {
+    // When transposed twice, we should get the same matrix.
+    auto matrix = new Matrix!int(2, 3, [
+        1, 2, 3,
+        0, -6, 7
+    ]);
+
+    assert(matrix == matrix.transpose.transpose);
 }
