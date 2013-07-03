@@ -287,12 +287,8 @@ public:
         assert(this.rowCount == other.rowCount);
         assert(this.columnCount == other.columnCount);
     } body {
-        foreach(i; 0..rowCount) {
-            size_t off = offset(i);
-
-            foreach(j; 0..columnCount) {
-                mixin(`_data[off + j]` ~ op ~ `= other._data[off + j];`);
-            }
+        foreach(i; 0.._data.length) {
+            mixin(`_data[i]` ~ op ~ `= other._data[i];`);
         }
     }
 
@@ -356,12 +352,8 @@ public:
     @safe pure nothrow
     void opOpAssign(string op, OtherNumber)(OtherNumber other)
     if(op != "in" && op != "~" && is(OtherNumber : Number)) {
-        foreach(i; 0..rowCount) {
-            size_t off = offset(i);
-
-            foreach(j; 0..columnCount) {
-                mixin(`_data[off + j] ` ~ op ~ `= other;`);
-            }
+        foreach(i; 0.._data.length) {
+            mixin(`_data[i]` ~ op ~ `= other;`);
         }
     }
 
@@ -686,8 +678,8 @@ Matrix!Number transpose(Number)(const Matrix!Number matrix)
 in {
     assert(matrix !is null);
 } out(val) {
-    assert(matrix.columnCount == val.columnCount);
-    assert(matrix.rowCount == val.rowCount);
+    assert(matrix.columnCount == val.rowCount);
+    assert(matrix.rowCount == val.columnCount);
 } body {
     auto result = new typeof(return)(matrix.columnCount, matrix.rowCount);
 
