@@ -343,7 +343,19 @@ public:
     } body {
         auto result = new Matrix!Number(this.rowCount, other.columnCount);
 
+        foreach(row; 0..result.rowCount) {
+            foreach(column; 0..result.columnCount) {
+                Number value = this[row, 0] * other[0, column];
 
+                foreach(pivot; 1..this.columnCount) {
+                    value += this[row, pivot] * other[pivot, column];
+                }
+
+                result[row, column] = value;
+            }
+        }
+
+        return result;
     }
 
     /**
@@ -512,6 +524,35 @@ unittest {
     ]);
 
     assert(left == right);
+}
+
+// Test matrix multiplication
+unittest {
+    // Let's test the Wikipedia example, why not?
+    auto left = new Matrix!int(2, 3, [
+        2, 3, 4,
+        1, 0, 0
+    ]);
+
+    auto right = new Matrix!int(3, 2, [
+        0, 1000,
+        1, 100,
+        0, 10
+    ]);
+
+    auto result = left * right;
+
+    int[][] expected = [
+        [3, 2340],
+        [0, 1000]
+    ];
+
+
+    foreach(i; 0..2) {
+        foreach(j; 0..2) {
+            assert(result[i, j] == expected[i][j]);
+        }
+    }
 }
 
 /**
