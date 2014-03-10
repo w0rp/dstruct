@@ -147,30 +147,22 @@ public:
     @trusted pure
     bool opEquals(U)(const(HashSet!U) otherSet) const
     if (is(U : T) || is(T : U)) {
-        if (this.length != otherSet.length) {
-            return false;
-        }
-
         static if (is(U : T)) {
+            if (this.length != otherSet.length) {
+                return false;
+            }
+
             foreach(value, _; otherSet._map) {
                 if (value !in this) {
                     return false;
                 }
             }
+
+            return true;
         } else {
-            // BUG: someSet cannot be used directly inside the following
-            // foreach loop without breaking the pure qualifier,
-            // for whatever reason. Doing an immutable cast fixes this.
-            auto hackSet = cast(immutable) &otherSet;
-
-            foreach(value, _; _map) {
-                if (value !in hackSet._map) {
-                    return false;
-                }
-            }
+            // Implement equality the other way by flipping things around.
+            return otherSet == this;
         }
-
-        return true;
     }
 }
 
