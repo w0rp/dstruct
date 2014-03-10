@@ -10,8 +10,12 @@ import std.traits;
 
 /**
  * A matrix type. This is a 2D array of a guaranteed uniform size.
+ *
+ * Copying this struct will not copy the matrix data within, the
+ * struct will reference the previous matrix's data. So the semantics
+ * match that of dynamic arrays.
  */
-final class Matrix(Number) if(isNumeric!Number) {
+struct Matrix(Number) if(isNumeric!Number) {
 private:
     Number[] _data;
     size_t _rowCount;
@@ -23,10 +27,6 @@ private:
     size_t offset(size_t row) const {
         return row * _columnCount;
     }
-
-    // The empty constructor is used for making a copy with dup.
-    @safe pure nothrow
-    this() {}
 public:
     /**
      * Create an matrix from an array of data.
@@ -106,7 +106,7 @@ public:
      */
     @safe pure nothrow
     Matrix!Number dup() const {
-        auto mat = new Matrix!Number;
+        Matrix!Number mat;
 
         // We can't .dup in a nothrow function, but we can do this...
         mat._data = new Number[](_rowCount * _columnCount);
@@ -134,21 +134,16 @@ public:
      * Returns: A reference to this immutable matrix.
      */
     @safe pure nothrow
-    immutable(Matrix!Number) idup() immutable {
+    ref immutable(Matrix!Number) idup() immutable {
         // There's no need to copy immutable to immutable, share it!
         return this;
     }
 
     unittest {
-        auto m = new immutable Matrix!int;
+        immutable(Matrix!int) m;
 
         // Make sure this doesn't actually duplicate.
-        assert(m.idup is m);
-
-        auto o = new Matrix!int;
-
-        // Make sure this still does.
-        assert(o.idup !is o);
+        assert(&m.idup() == &m);
     }
 
     /// Returns: True if the matrix is empty.
@@ -258,9 +253,8 @@ public:
     (const Matrix!OtherNumber other)
     if((op == "+" || op == "-") && is(OtherNumber : Number))
     in {
-        assert(other !is null);
-        assert(this.rowCount == other.rowCount);
-        assert(this.columnCount == other.columnCount);
+        assert(rowCount == other.rowCount);
+        assert(columnCount == other.columnCount);
     } body {
         foreach(i; 0.._data.length) {
             mixin(`_data[i]` ~ op ~ `= other._data[i];`);
@@ -279,9 +273,8 @@ public:
     Matrix!Number opBinary(string op, OtherNumber)
     (const Matrix!OtherNumber other) const
     if((op == "+" || op == "-") && is(OtherNumber : Number)) in {
-        assert(other !is null);
-        assert(this.rowCount == other.rowCount);
-        assert(this.columnCount == other.columnCount);
+        assert(rowCount == other.rowCount);
+        assert(columnCount == other.columnCount);
     } out(val) {
         assert(this.rowCount == val.rowCount);
         assert(this.rowCount == val.rowCount);
@@ -310,13 +303,12 @@ public:
     Matrix!Number opBinary(string op, OtherNumber)
     (const Matrix!OtherNumber other) const
     if((op == "*") && is(OtherNumber : Number)) in {
-        assert(other !is null);
-        assert(this.columnCount == other.rowCount);
+        assert(columnCount == other.rowCount);
     } out(val) {
         assert(val.rowCount == this.rowCount);
         assert(val.columnCount == other.columnCount);
     } body {
-        auto result = new Matrix!Number(this.rowCount, other.columnCount);
+        auto result = Matrix!Number(this.rowCount, other.columnCount);
 
         foreach(row; 0..result.rowCount) {
             foreach(column; 0..result.columnCount) {
@@ -361,15 +353,12 @@ public:
     /**
      * Returns: true if two matrices are equal and have the same type.
      */
-    override
     @safe pure nothrow
-    bool opEquals(Object o) const {
-        auto other = cast(typeof(this)) o;
-
-        return other !is null
-            && _rowCount == other._rowCount
-            && _columnCount == other._columnCount
-            && _data == other._data;
+    bool opEquals(T)(const(Matrix!T) otherMatrix) const
+    if (is(T : Number) || is (Number : T)) {
+        return _rowCount == otherMatrix._rowCount
+            && _columnCount == otherMatrix._columnCount
+            && _data == otherMatrix._data;
     }
 }
 
@@ -379,7 +368,7 @@ unittest {
     size_t columnCount = 3;
     int expectedValue = 42;
 
-    auto mat = new Matrix!int(rowCount, columnCount, expectedValue);
+    auto mat = Matrix!int(rowCount, columnCount, expectedValue);
 
     size_t expectedRow = 0;
     size_t expectedColumn = 0;
@@ -398,7 +387,7 @@ unittest {
 
 // Test matrix referencing and copying
 unittest {
-    auto mat = new Matrix!int(3, 3);
+    auto mat = Matrix!int(3, 3);
 
     mat[0, 0] = 42;
 
@@ -413,7 +402,7 @@ unittest {
 
 // Test immutable initialisation for a matrix
 unittest {
-    immutable mat = new immutable Matrix!int(3, 3, [
+    immutable mat = immutable Matrix!int(3, 3, [
         1, 2, 3,
         4, 5, 6,
         7, 8, 9
@@ -431,8 +420,8 @@ unittest {
         int leftValue = 8;
         byte rightValue = 10;
 
-        auto left = new Matrix!int(rowCount, columnCount, leftValue);
-        auto right = new Matrix!byte(rowCount, columnCount, rightValue);
+        auto left = Matrix!int(rowCount, columnCount, leftValue);
+        auto right = Matrix!byte(rowCount, columnCount, rightValue);
 
         auto result = mixin(`left` ~ op ~ `right`);
         auto expectedScalar = mixin(`leftValue` ~ op ~ `rightValue`);
@@ -458,7 +447,7 @@ unittest {
         long matrixValue = 1_234_567;
         int scalar = 11;
 
-        auto matrix = new Matrix!long(rowCount, columnCount, matrixValue);
+        auto matrix = Matrix!long(rowCount, columnCount, matrixValue);
 
         auto result = mixin(`matrix` ~ op ~ `scalar`);
 
@@ -486,13 +475,13 @@ unittest {
 unittest {
     // Test matrix equality.
 
-    auto left = new Matrix!int(3, 3, [
+    auto left = Matrix!int(3, 3, [
         1, 2, 3,
         4, 5, 6,
         7, 8, 9
     ]);
 
-    auto right = new immutable Matrix!int(3, 3, [
+    auto right = immutable Matrix!int(3, 3, [
         1, 2, 3,
         4, 5, 6,
         7, 8, 9
@@ -504,12 +493,12 @@ unittest {
 // Test matrix multiplication
 unittest {
     // Let's test the Wikipedia example, why not?
-    auto left = new Matrix!int(2, 3, [
+    auto left = Matrix!int(2, 3, [
         2, 3, 4,
         1, 0, 0
     ]);
 
-    auto right = new Matrix!int(3, 2, [
+    auto right = Matrix!int(3, 2, [
         0, 1000,
         1, 100,
         0, 10
@@ -541,10 +530,7 @@ private:
 
     // A private constructor used for saving the range.
     @safe pure nothrow
-    this(const Matrix!Number matrix, size_t currentRow, size_t upperBound)
-    in {
-        assert(matrix !is null);
-    } body {
+    this(const Matrix!Number matrix, size_t currentRow, size_t upperBound) {
         _matrix = matrix;
         _currentRow = currentRow;
         _upperBound = upperBound;
@@ -631,7 +617,7 @@ Rows!Number rows(Number)(Matrix!Number matrix) {
 }
 
 unittest {
-    auto mat = new Matrix!int(3, 3, [
+    auto mat = Matrix!int(3, 3, [
         1, 2, 3,
         4, 5, 6,
         7, 8, 9
@@ -691,13 +677,11 @@ unittest {
  */
 @safe pure nothrow
 Matrix!Number transpose(Number)(const Matrix!Number matrix)
-in {
-    assert(matrix !is null);
-} out(val) {
+out(val) {
     assert(matrix.columnCount == val.rowCount);
     assert(matrix.rowCount == val.columnCount);
 } body {
-    auto result = new typeof(return)(matrix.columnCount, matrix.rowCount);
+    auto result = typeof(return)(matrix.columnCount, matrix.rowCount);
 
     foreach(row; 0..matrix.rowCount) {
         foreach(col; 0..matrix.columnCount) {
@@ -709,7 +693,7 @@ in {
 }
 
 unittest {
-    auto matrix = new Matrix!int(2, 3, [
+    auto matrix = Matrix!int(2, 3, [
         1, 2, 3,
         0, -6, 7
     ]);
@@ -725,10 +709,20 @@ unittest {
 
 unittest {
     // When transposed twice, we should get the same matrix.
-    auto matrix = new Matrix!int(2, 3, [
+    auto matrix = Matrix!int(2, 3, [
         1, 2, 3,
         0, -6, 7
     ]);
 
     assert(matrix == matrix.transpose.transpose);
+}
+
+// Test that struct copies don't really copy.
+unittest {
+    auto matrix = Matrix!int(2, 2, 3);
+    auto otherMatrix = matrix;
+
+    otherMatrix[0, 0] = 4;
+
+    assert (matrix == otherMatrix);
 }
