@@ -81,27 +81,6 @@ public:
     }
 
     /**
-     * Create a matrix of a given size.
-     *
-     * Params:
-     *     rowCount = The number of rows for the matrix.
-     *     columnCount = The number of columns for the matrix.
-     *     initial = An initial value for each cell in the matrix.
-     */
-    @safe pure nothrow
-    this(size_t rowCount, size_t columnCount, Number initial) {
-        this(rowCount, columnCount);
-
-        foreach(i; 0 .. rowCount) {
-            size_t off = offset(i);
-
-            foreach(j; 0 .. columnCount) {
-                _data[off + j] = initial;
-            }
-        }
-    }
-
-    /**
      * Returns: A new duplicate of this matrix.
      */
     @safe pure nothrow
@@ -370,7 +349,12 @@ unittest {
     size_t columnCount = 3;
     int expectedValue = 42;
 
-    auto mat = new Matrix!int(rowCount, columnCount, expectedValue);
+    auto mat = new Matrix!int(rowCount, columnCount, [
+        42, 42, 42,
+        42, 42, 42,
+        42, 42, 42,
+        42, 42, 42
+    ]);
 
     size_t expectedRow = 0;
     size_t expectedColumn = 0;
@@ -435,8 +419,19 @@ unittest {
         int leftValue = 8;
         byte rightValue = 10;
 
-        auto left = new Matrix!int(rowCount, columnCount, leftValue);
-        auto right = new Matrix!byte(rowCount, columnCount, rightValue);
+        auto left = new Matrix!int(rowCount, columnCount, [
+            8, 8, 8, 8,
+            8, 8, 8, 8,
+            8, 8, 8, 8,
+            8, 8, 8, 8,
+        ]);
+
+        auto right = new Matrix!byte(rowCount, columnCount, [
+            10, 10, 10, 10,
+            10, 10, 10, 10,
+            10, 10, 10, 10,
+            10, 10, 10, 10,
+        ]);
 
         auto result = mixin(`left` ~ op ~ `right`);
         auto expectedScalar = mixin(`leftValue` ~ op ~ `rightValue`);
@@ -462,7 +457,10 @@ unittest {
         long matrixValue = 1_234_567;
         int scalar = 11;
 
-        auto matrix = new Matrix!long(rowCount, columnCount, matrixValue);
+        auto matrix = new Matrix!long(rowCount, columnCount, [
+            matrixValue, matrixValue, matrixValue,
+            matrixValue, matrixValue, matrixValue,
+        ]);
 
         auto result = mixin(`matrix` ~ op ~ `scalar`);
 
@@ -692,15 +690,17 @@ unittest {
  */
 struct Matrix(Number, size_t _rowCount, size_t _columnCount)
 if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
-private:
-    Number[columnCount][rowCount] _data;
-public:
     /// The number of rows in this matrix.
     enum rowCount = _rowCount;
     /// The number of columns in this matrix.
     enum columnCount = _columnCount;
     /// True if this matrix is a zero-sized matrix.
     enum empty = false;
+
+    /// The data backing this matrix.
+    Number[columnCount][rowCount] array2D;
+
+    alias array2D this;
 
     /**
      * Construct this matrix from a 2 dimensional static array.
@@ -709,14 +709,14 @@ public:
      *     array2D = A 2 dimension array of the same size.
      */
     @safe pure nothrow
-    this(ref const(Number[columnCount][rowCount]) array2D) inout {
-        _data = array2D;
+    this(ref const(Number[columnCount][rowCount]) data) inout {
+        array2D = data;
     }
 
     /// ditto
     @safe pure nothrow
-    this(const(Number[columnCount][rowCount]) array2D) inout {
-        _data = array2D;
+    this(const(Number[columnCount][rowCount]) data) inout {
+        array2D = data;
     }
 
     /**
@@ -730,36 +730,30 @@ public:
     this(Number[rowCount * columnCount] numbers...) {
         foreach(row; 0 .. rowCount) {
             foreach(column; 0 .. columnCount) {
-                _data[row][column] = numbers[row * columnCount + column];
+                array2D[row][column] = numbers[row * columnCount + column];
             }
         }
-    }
-
-    /**
-     * Returns: A reference to the inner 2D static array backing this matrix.
-     */
-    @safe pure nothrow
-    ref inout(Number[columnCount][rowCount]) toArray2D() inout {
-        return _data;
     }
 
     /**
      * Returns: A reference to this matrix's data as a 1D array.
      */
     @trusted pure nothrow
-    ref inout(Number[rowCount * columnCount]) toArray1D() inout {
-        return (cast(Number*)_data.ptr)[0 .. rowCount * columnCount];
+    @property
+    ref inout(Number[rowCount * columnCount]) array1D() inout {
+        return (cast(Number*)array2D.ptr)[0 .. rowCount * columnCount];
     }
 
+    // Even with alias this, we still need this overload.
     /**
      * Params:
      *    row = A row index.
      *
-     * Returns: A reference to a row in this matrix.
+     * Returns: A row from the matrix.
      */
-    @trusted pure nothrow
+    @safe pure nothrow
     ref inout(Number[columnCount]) opIndex(size_t row) inout {
-        return _data[row];
+        return array2D[row];
     }
 
     /**
@@ -771,7 +765,7 @@ public:
      */
     @safe pure nothrow
     ref inout(Number) opIndex(size_t row, size_t column) inout {
-        return _data[row][column];
+        return array2D[row][column];
     }
 }
 
@@ -799,14 +793,14 @@ if ((rowCount > 0 && columnCount == 0) || (rowCount == 0 && columnCount > 0)) {
 
 // Test copy constructor for 2D arrays.
 unittest {
-    int[3][2] array2D = [
+    int[3][2] data = [
         [1, 2, 3],
         [4, 5, 6],
     ];
 
-    Matrix!(int, 2, 3) matrix = array2D;
+    Matrix!(int, 2, 3) matrix = data;
 
-    assert(array2D == matrix._data);
+    assert(data == matrix);
 }
 
 // Test move constructor for 2D arrays.
@@ -820,36 +814,27 @@ unittest {
 
 // Test immutable too.
 unittest {
-    immutable(int[3][3]) array2D = [
+    immutable(int[3][3]) data = [
         [1, 2, 3],
         [4, 5, 6],
         [7, 8, 9]
     ];
 
-    Matrix!(int, 3, 3) matrix = array2D;
+    Matrix!(int, 3, 3) matrix = data;
 
-    assert(array2D == matrix._data);
-
-    int[3][3] array2DAgain = [
-        [1, 2, 3],
-        [4, 5, 6],
-        [7, 8, 9]
-    ];
-
-    immutable(Matrix!(int, 3, 3,)) matrixAgain = array2DAgain;
-
-    assert(array2DAgain == matrixAgain._data);
+    assert(data == matrix);
 }
 
 unittest {
-    auto matrix = Matrix!(int, 3, 3)([
+    int[3][3] data = [
         [1, 2, 3],
         [4, 5, 6],
         [7, 8, 9]
-    ]);
+    ];
 
-    assert(&matrix._data == &matrix.toArray2D());
-    assert(matrix._data == matrix.toArray2D());
+    immutable(Matrix!(int, 3, 3,)) matrix = data;
+
+    assert(data == matrix);
 }
 
 // Test 1D array matrix slicing.
@@ -860,9 +845,9 @@ unittest {
         [7, 8, 9]
     ]);
 
-    assert(matrix.toArray1D() == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert(matrix.array1D == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
-    matrix.toArray1D()[0] = 347;
+    matrix.array1D[0] = 347;
 
     assert(matrix[0][0] == 347);
 }
@@ -875,8 +860,8 @@ unittest {
         [7, 8, 9]
     ]);
 
-    assert(matrix.toArray1D() == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    assert(is(typeof(matrix.toArray1D()) == const int[9]));
+    assert(matrix.array1D == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert(is(typeof(matrix.array1D) == const int[9]));
 }
 
 unittest {
@@ -886,8 +871,8 @@ unittest {
         [7, 8, 9]
     ]);
 
-    assert(matrix.toArray1D() == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    assert(is(typeof(matrix.toArray1D()) == immutable int[9]));
+    assert(matrix.array1D == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert(is(typeof(matrix.array1D) == immutable int[9]));
 }
 
 // Test compile time init with numbers.
@@ -898,15 +883,15 @@ unittest {
         7, 8, 9
     );
 
-    assert(matrix._data[0][0] == 1);
-    assert(matrix._data[0][1] == 2);
-    assert(matrix._data[0][2] == 3);
-    assert(matrix._data[1][0] == 4);
-    assert(matrix._data[1][1] == 5);
-    assert(matrix._data[1][2] == 6);
-    assert(matrix._data[2][0] == 7);
-    assert(matrix._data[2][1] == 8);
-    assert(matrix._data[2][2] == 9);
+    assert(matrix.array2D[0][0] == 1);
+    assert(matrix.array2D[0][1] == 2);
+    assert(matrix.array2D[0][2] == 3);
+    assert(matrix.array2D[1][0] == 4);
+    assert(matrix.array2D[1][1] == 5);
+    assert(matrix.array2D[1][2] == 6);
+    assert(matrix.array2D[2][0] == 7);
+    assert(matrix.array2D[2][1] == 8);
+    assert(matrix.array2D[2][2] == 9);
 }
 
 // Test zero sized matrices
