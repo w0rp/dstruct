@@ -176,19 +176,22 @@ public:
     }
 
     /**
+     * Slice out a row from the matrix. Modifying this
+     * slice will modify the matrix, unless it is copied.
+     *
      * Params:
      *    row = A row index.
      *
-     * Returns: A const view of a matrix row.
+     * Returns: A slice of the row of the matrix.
      */
     @trusted pure nothrow
-    const(Number[]) opIndex(size_t row) const
+    inout(Number[]) opIndex(size_t row) inout
     in {
         assert(row <= rowCount, "row out of bounds!");
     } body {
         size_t off = offset(row);
 
-        return _data[off..off + _columnCount];
+        return _data[off .. off + _columnCount];
     }
 
     /**
@@ -199,23 +202,11 @@ public:
      * Returns: A value from the matrix
      */
     @safe pure nothrow
-    Number opIndex(size_t row, size_t column) const
+    ref inout(Number) opIndex(size_t row, size_t column) inout
     in {
         assert(column <= columnCount, "column out of bounds!");
     } body {
         return _data[offset(row) + column];
-    }
-
-    /**
-     * Returns: Set a value in the matrix.
-     */
-    @safe pure nothrow
-    void opIndexAssign(Number value, size_t row, size_t column)
-    in {
-        assert(row <= rowCount, "row out of bounds!");
-        assert(column <= columnCount, "column out of bounds!");
-    } body {
-        _data[offset(row) + column] = value;
     }
 
     /**
@@ -409,6 +400,19 @@ unittest {
     assert(mat[0, 0] == 42, "Matrix .dup created a data reference!");
 
     immutable immutCopy = mat.idup;
+}
+
+// Test modifying a matrix row externally.
+unittest {
+    auto mat = new Matrix!int(3, 3);
+
+    auto row = mat[0];
+
+    row[0] = 3;
+    row[1] = 4;
+    row[2] = 7;
+
+    assert(mat[0] == [3, 4, 7]);
 }
 
 // Test immutable initialisation for a matrix
@@ -681,6 +685,260 @@ unittest {
     assert(range3[0] == [4, 5, 6]);
 }
 
+
+/**
+ * A static matrix type. This is a value matrix value type created directly
+ * on the stack.
+ */
+struct Matrix(Number, size_t _rowCount, size_t _columnCount)
+if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
+private:
+    Number[columnCount][rowCount] _data;
+public:
+    /// The number of rows in this matrix.
+    enum rowCount = _rowCount;
+    /// The number of columns in this matrix.
+    enum columnCount = _columnCount;
+    /// True if this matrix is a zero-sized matrix.
+    enum empty = false;
+
+    /**
+     * Construct this matrix from a 2 dimensional static array.
+     *
+     * Params:
+     *     array2D = A 2 dimension array of the same size.
+     */
+    @safe pure nothrow
+    this(ref const(Number[columnCount][rowCount]) array2D) inout {
+        _data = array2D;
+    }
+
+    /// ditto
+    @safe pure nothrow
+    this(const(Number[columnCount][rowCount]) array2D) inout {
+        _data = array2D;
+    }
+
+    /**
+     * Construct this matrix directly from a series of numbers.
+     * This constructor is designed to be executed at compile time.
+     *
+     * Params:
+     *     numbers... = A series of numbers to initialise the matrix with.
+     */
+    @safe pure nothrow
+    this(Number[rowCount * columnCount] numbers...) {
+        foreach(row; 0 .. rowCount) {
+            foreach(column; 0 .. columnCount) {
+                _data[row][column] = numbers[row * columnCount + column];
+            }
+        }
+    }
+
+    /**
+     * Returns: A reference to the inner 2D static array backing this matrix.
+     */
+    @safe pure nothrow
+    ref inout(Number[columnCount][rowCount]) toArray2D() inout {
+        return _data;
+    }
+
+    /**
+     * Returns: A reference to this matrix's data as a 1D array.
+     */
+    @trusted pure nothrow
+    ref inout(Number[rowCount * columnCount]) toArray1D() inout {
+        return (cast(Number*)_data.ptr)[0 .. rowCount * columnCount];
+    }
+
+    /**
+     * Params:
+     *    row = A row index.
+     *
+     * Returns: A reference to a row in this matrix.
+     */
+    @trusted pure nothrow
+    ref inout(Number[columnCount]) opIndex(size_t row) inout {
+        return _data[row];
+    }
+
+    /**
+     * Params:
+     *    row = A row index.
+     *    column = A column index.
+     *
+     * Returns: A value from the matrix
+     */
+    @safe pure nothrow
+    ref inout(Number) opIndex(size_t row, size_t column) inout {
+        return _data[row][column];
+    }
+}
+
+// 0 size matrices are special case.
+
+/// ditto
+struct Matrix(Number, size_t _rowCount, size_t _columnCount)
+if(isNumeric!Number && _rowCount == 0 && _columnCount == 0) {
+    /// The number of rows in this matrix.
+    enum rowCount = _rowCount;
+    /// The number of columns in this matrix.
+    enum columnCount = _columnCount;
+    /// True if this matrix is a zero-sized matrix.
+    enum empty = true;
+}
+
+/**
+ * Alias all (M, 0), (0, N) size static matrices into one single zero-sized
+ * type of size (0, 0).
+ */
+template Matrix(Number, size_t rowCount, size_t columnCount)
+if ((rowCount > 0 && columnCount == 0) || (rowCount == 0 && columnCount > 0)) {
+    alias Matrix = Matrix!(Number, 0, 0);
+}
+
+// Test copy constructor for 2D arrays.
+unittest {
+    int[3][2] array2D = [
+        [1, 2, 3],
+        [4, 5, 6],
+    ];
+
+    Matrix!(int, 2, 3) matrix = array2D;
+
+    assert(array2D == matrix._data);
+}
+
+// Test move constructor for 2D arrays.
+unittest {
+    auto matrix = Matrix!(int, 3, 3)([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ]);
+}
+
+// Test immutable too.
+unittest {
+    immutable(int[3][3]) array2D = [
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ];
+
+    Matrix!(int, 3, 3) matrix = array2D;
+
+    assert(array2D == matrix._data);
+
+    int[3][3] array2DAgain = [
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ];
+
+    immutable(Matrix!(int, 3, 3,)) matrixAgain = array2DAgain;
+
+    assert(array2DAgain == matrixAgain._data);
+}
+
+unittest {
+    auto matrix = Matrix!(int, 3, 3)([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ]);
+
+    assert(&matrix._data == &matrix.toArray2D());
+    assert(matrix._data == matrix.toArray2D());
+}
+
+// Test 1D array matrix slicing.
+unittest {
+    auto matrix = Matrix!(int, 3, 3)([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ]);
+
+    assert(matrix.toArray1D() == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+    matrix.toArray1D()[0] = 347;
+
+    assert(matrix[0][0] == 347);
+}
+
+// Test const and immutable 1D array, just in case.
+unittest {
+    const matrix = Matrix!(int, 3, 3)([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ]);
+
+    assert(matrix.toArray1D() == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert(is(typeof(matrix.toArray1D()) == const int[9]));
+}
+
+unittest {
+    immutable matrix = Matrix!(int, 3, 3)([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ]);
+
+    assert(matrix.toArray1D() == [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert(is(typeof(matrix.toArray1D()) == immutable int[9]));
+}
+
+// Test compile time init with numbers.
+unittest {
+    enum matrix = Matrix!(int, 3, 3)(
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9
+    );
+
+    assert(matrix._data[0][0] == 1);
+    assert(matrix._data[0][1] == 2);
+    assert(matrix._data[0][2] == 3);
+    assert(matrix._data[1][0] == 4);
+    assert(matrix._data[1][1] == 5);
+    assert(matrix._data[1][2] == 6);
+    assert(matrix._data[2][0] == 7);
+    assert(matrix._data[2][1] == 8);
+    assert(matrix._data[2][2] == 9);
+}
+
+// Test zero sized matrices
+unittest {
+    Matrix!(int, 0, 0) nothing;
+    Matrix!(int, 1, 1) scalar;
+
+    assert(nothing.empty);
+    assert(!scalar.empty);
+
+    Matrix!(int, 0, 1) noRows;
+    Matrix!(int, 1, 0) noColumns;
+
+    assert(is(typeof(nothing) == typeof(noRows)));
+    assert(is(typeof(noRows) == typeof(noColumns)));
+}
+
+// Test index and assignment for cells.
+unittest {
+    Matrix!(int, 3, 3) matrix;
+
+    assert(matrix[0, 0] == 0);
+
+    matrix[0, 0] = 3;
+
+    assert(matrix[0, 0] == 3);
+
+    matrix[0, 0] *= 3;
+
+    assert(matrix[0, 0] == 9);
+}
+
 /**
  * Transpose (flip) a matrix.
  *
@@ -699,13 +957,37 @@ in {
 } body {
     auto result = new typeof(return)(matrix.columnCount, matrix.rowCount);
 
-    foreach(row; 0..matrix.rowCount) {
-        foreach(col; 0..matrix.columnCount) {
+    foreach(row; 0 .. matrix.rowCount) {
+        foreach(col; 0 .. matrix.columnCount) {
             result[col, row] = matrix[row, col];
         }
     }
 
     return result;
+}
+
+/// ditto
+@safe pure nothrow
+Matrix!(Number, columnCount, rowCount)
+transpose(Number, size_t rowCount, size_t columnCount)
+(ref const Matrix!(Number, rowCount, columnCount) matrix) {
+    typeof(return) result;
+
+    foreach(row; 0 .. matrix.rowCount) {
+        foreach(col; 0 .. matrix.columnCount) {
+            result[col, row] = matrix[row, col];
+        }
+    }
+
+    return result;
+}
+
+/// ditto
+@safe pure nothrow
+Matrix!(Number, columnCount, rowCount)
+transpose(Number, size_t rowCount, size_t columnCount)
+(const Matrix!(Number, rowCount, columnCount) matrix) {
+    return transpose(matrix);
 }
 
 unittest {
@@ -729,6 +1011,15 @@ unittest {
         1, 2, 3,
         0, -6, 7
     ]);
+
+    assert(matrix == matrix.transpose.transpose);
+}
+
+unittest {
+    auto matrix = Matrix!(int, 2, 3)(
+        1, 2, 3,
+        0, -6, 7
+    );
 
     assert(matrix == matrix.transpose.transpose);
 }
