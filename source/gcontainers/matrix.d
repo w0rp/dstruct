@@ -941,6 +941,40 @@ unittest {
     assert(matrix[0][0] == 347);
 }
 
+// Test that copy semantics work property for 1D arrays.
+unittest {
+    auto matrix = Matrix!(int, 3, 3)([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ]);
+
+    auto arr = matrix.array1D;
+
+    arr[0] = 347;
+
+    // The value should not have changed.
+    assert(matrix[0][0] == 1);
+}
+
+// Test that reference semantics work property for 1D arrays.
+unittest {
+    auto matrix = Matrix!(int, 3, 3)([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ]);
+
+    void foo(ref int[9] arr) {
+        arr[0] = 347;
+    }
+
+    foo(matrix.array1D);
+
+    // The should have changed.
+    assert(matrix[0][0] == 347);
+}
+
 // Test const and immutable 1D array, just in case.
 unittest {
     const matrix = Matrix!(int, 3, 3)([
