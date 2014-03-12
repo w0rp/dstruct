@@ -694,8 +694,10 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
     enum rowCount = _rowCount;
     /// The number of columns in this matrix.
     enum columnCount = _columnCount;
-    /// True if this matrix is a zero-sized matrix.
+    /// true if this matrix is a zero-sized matrix.
     enum empty = false;
+    /// true if this matrix is a square matrix.
+    enum isSquare = rowCount == columnCount;
 
     /// The data backing this matrix.
     Number[columnCount][rowCount] array2D;
@@ -767,6 +769,91 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
     ref inout(Number) opIndex(size_t row, size_t column) inout {
         return array2D[row][column];
     }
+
+    /**
+     * Overload for foreach(rowIndex, columnIndex, value; matrix) {}
+     */
+    @trusted
+    int opApply(int delegate(ref size_t, ref size_t, ref Number) dg) {
+        int result = 0;
+
+        matrixLoop: foreach(row, rowArray; array2D) {
+            foreach(column, value; rowArray) {
+                result = dg(row, column, value);
+
+                if (result) {
+                    break matrixLoop;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Modify this matrix, adding/subtracting values from another matrix.
+     *
+     * Example:
+     * ---
+     *     matrix += other_matrix;
+     *     matrix -= yet_another_matrix;
+     * ---
+     *
+     * Params:
+     *     other = Another matrix with an implicitly convertible numeric type.
+     */
+    @safe pure nothrow
+    void opOpAssign(string op, OtherNumber)
+    (ref const(Matrix!(OtherNumber, rowCount, columnCount)) other)
+    if((op == "+" || op == "-") && is(OtherNumber : Number)) {
+        foreach(i; 0 .. rowCount) {
+            foreach(j; 0 .. columnCount) {
+                mixin(`array2D[i][j]` ~ op ~ `= other.array2D[i][j];`);
+            }
+        }
+    }
+
+    /// ditto
+    @safe pure nothrow
+    void opOpAssign(string op, OtherNumber)
+    (const(Matrix!(OtherNumber, rowCount, columnCount)) other)
+    if((op == "+" || op == "-") && is(OtherNumber : Number)) {
+        opOpAssign(other);
+    }
+
+    /**
+     * Add or subtract two matrices, yielding a new matrix.
+     *
+     * Params:
+     *     other = The other matrix.
+     *
+     * Returns: A new matrix.
+     */
+    @safe pure nothrow
+    Matrix!(Number, rowCount, columnCount) opBinary(string op, OtherNumber)
+    (ref const(Matrix!(OtherNumber, rowCount, columnCount)) other)
+    if((op == "+" || op == "-") && is(OtherNumber : Number)) {
+        // Copy this matrix.
+        typeof(return) result = this;
+
+        mixin(`result ` ~ op ~ `= other;`);
+
+        return result;
+    }
+
+    @safe pure nothrow
+    Matrix!(Number, rowCount, columnCount) opBinary(string op, OtherNumber)
+    (const(Matrix!(OtherNumber, rowCount, columnCount)) other)
+    if((op == "+" || op == "-") && is(OtherNumber : Number)) {
+        return opBinary(other);
+    }
+
+    /// ditto
+    @safe pure nothrow
+    void opOpAssign(string op, OtherNumber)
+    (const(Matrix!(OtherNumber, rowCount, columnCount)) other) {
+        opOpAssign(other);
+    }
 }
 
 // 0 size matrices are special case.
@@ -780,6 +867,8 @@ if(isNumeric!Number && _rowCount == 0 && _columnCount == 0) {
     enum columnCount = _columnCount;
     /// True if this matrix is a zero-sized matrix.
     enum empty = true;
+    /// true if this matrix is a square matrix.
+    enum isSquare = true;
 }
 
 /**
@@ -1007,4 +1096,85 @@ unittest {
     );
 
     assert(matrix == matrix.transpose.transpose);
+}
+
+// Test foreach on static matrices.
+unittest {
+    auto matrix = Matrix!(int, 2, 3)(
+        1, 2, 3,
+        0, -6, 7
+    );
+
+    foreach(row, col, value; matrix) {
+        if (row == 0) {
+            if (col == 0) {
+                assert(value == 1);
+            } else if (col == 1) {
+                assert(value == 2);
+            } else {
+                assert(value == 3);
+            }
+        } else {
+            if (col == 0) {
+                assert(value == 0);
+            } else if (col == 1) {
+                assert(value == -6);
+            } else {
+                assert(value == 7);
+            }
+        }
+    }
+}
+
+// Test binary modifying operations on static matrices.
+unittest {
+    auto left = Matrix!(int, 2, 3)(
+        1, 2, 3,
+        4, 5, 6
+    );
+
+    auto right = Matrix!(int, 2, 3)(
+        1, 2, 3,
+        4, 5, 6
+    );
+
+    left -= right;
+
+    foreach(row, col, value; left) {
+        assert(value == 0);
+    }
+
+    left -= right;
+    left += right;
+
+    foreach(row, col, value; left) {
+        assert(value == 0);
+    }
+}
+
+// Test binary copying operations on static matrices.
+unittest {
+    auto left = Matrix!(int, 2, 3)(
+        1, 2, 3,
+        4, 5, 6
+    );
+
+    auto right = Matrix!(int, 2, 3)(
+        1, 2, 3,
+        4, 5, 6
+    );
+
+    auto newMatrix = left - right;
+
+    foreach(row, col, value; newMatrix) {
+        assert(value == 0);
+    }
+
+    auto finalMatrix = newMatrix + left;
+
+    finalMatrix -= left;
+
+    foreach(row, col, value; finalMatrix) {
+        assert(value == 0);
+    }
 }
