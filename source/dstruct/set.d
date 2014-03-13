@@ -2,7 +2,7 @@
  * This module defines a hash set data structure and various operations
  * on it.
  */
-module gcontainers.set;
+module dstruct.set;
 
 /**
  * A garbage collected implementation of a hash set.

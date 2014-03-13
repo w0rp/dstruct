@@ -4,7 +4,7 @@
  * so they can be used in any such function, and the results of any
  * operation can be implicitly converted to an immutable type.
  */
-module gcontainers.matrix;
+module dstruct.matrix;
 
 import std.traits;
 
