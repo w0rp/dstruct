@@ -1,9 +1,9 @@
 {
-    "name": "gcontainers",
+    "name": "dstruct",
     "targetType": "sourceLibrary",
-    "description": "Garbage collected container types for D.",
+    "description": "D Data Structures",
     "authors": ["w0rp"],
-    "homepage": "https://github.com/w0rp/gcontainers",
+    "homepage": "https://github.com/w0rp/dstruct",
     "license": "BSD 2-clause",
     "copyright": "Copyright © 2014, w0rp",
     "dependencies": {
