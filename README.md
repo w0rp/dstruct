@@ -11,10 +11,17 @@ doesn't need to be built itself.
 
 ## Data Structures in This Library
 
-* [WeakReference(T)](source/dstruct/weak_reference.d) - An implementation of weak references.
+* [WeakReference(T)](source/dstruct/weak_reference.d) - An implementation of
+  weak references.
+* [Some(T)](source/dstruct/option.d) - A type wrapping a nullable type which
+  cannot be null.
+* [Option(T)](source/dstruct/option.d) - An Option/Maybe type for safer
+  null handling.
 * [HashSet(T)](source/dstruct/set.d) - A garbage collected hashset type.
-* [Matrix(T)](source/dstruct/matrix.d) - A garbage collected dynamic matrix type.
-* [Matrix(T, rowCount, columnCount)](source/dstruct/matrix.d) - A static matrix value type.
+* [Matrix(T)](source/dstruct/matrix.d) - A garbage collected dynamic
+  matrix type.
+* [Matrix(T, rowCount, columnCount)](source/dstruct/matrix.d) - A static
+  matrix value type.
 
 ## Design Philosophy
 
