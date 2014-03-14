@@ -7,7 +7,7 @@ module dstruct.option;
 import std.traits: isPointer;
 
 /**
- * This type represents a value which cannot be null its contracts.
+ * This type represents a value which cannot be null by its contracts.
  */
 struct Some(T) if (is(T == class) || isPointer!T) {
 private:
