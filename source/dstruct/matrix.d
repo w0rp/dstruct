@@ -925,7 +925,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
     Matrix!(Number, rowCount, otherColumnCount) 
     opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
     (ref const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
-    if((op == "*") && is(OtherNumber : Number)) {
+    if((op == "*") && (columnCount == otherRowCount) && is(OtherNumber : Number)) {
         typeof(return) result;
 
         matrixMultiply(result, this, other);
@@ -938,7 +938,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
     Matrix!(Number, rowCount, otherColumnCount) 
     opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
     (const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
-    if((op == "*") && is(OtherNumber : Number)) in {
+    if((op == "*") && (columnCount == otherRowCount) && is(OtherNumber : Number)) in {
         return opBinary!(op, OtherNumber, otherRowCount, otherColumnCount)(other);
     }
 
@@ -946,7 +946,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
     Matrix!(OtherNumber, rowCount, otherColumnCount) 
     opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
     (ref const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
-    if((op == "*") && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
+    if((op == "*") && (columnCount == otherRowCount) && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
         typeof(return) result;
 
         matrixMultiply(result, this, other);
@@ -958,7 +958,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
     Matrix!(OtherNumber, rowCount, otherColumnCount) 
     opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
     (const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
-    if((op == "*") && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
+    if((op == "*") && (columnCount == otherRowCount) && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
         return opBinary!(op, OtherNumber, otherRowCount, otherColumnCount)(other);
     }
 }
