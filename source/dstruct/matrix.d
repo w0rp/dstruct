@@ -11,22 +11,11 @@ import std.traits;
 /**
  * A matrix type. This is a 2D array of a guaranteed uniform size.
  */
-final class Matrix(Number) if(isNumeric!Number) {
+struct Matrix(Number) if(isNumeric!Number) {
 private:
     Number[] _data;
     size_t _rowCount;
     size_t _columnCount;
-
-    // Given a row index, calculate the position in the 1D array where that
-    // row begins.
-    @safe pure nothrow
-    size_t offset(size_t row) const {
-        return row * _columnCount;
-    }
-
-    // The empty constructor is used for making a copy with dup.
-    @safe pure nothrow
-    this() {}
 public:
     /**
      * Create an matrix from an array of data.
@@ -85,7 +74,7 @@ public:
      */
     @safe pure nothrow
     Matrix!Number dup() const {
-        auto mat = new Matrix!Number;
+        Matrix!Number mat;
 
         // We can't .dup in a nothrow function, but we can do this...
         mat._data = new Number[](_rowCount * _columnCount);
@@ -102,7 +91,7 @@ public:
      */
     @safe pure nothrow
     immutable(Matrix!Number) idup() const {
-        return dup;
+        return dup();
     }
 
     /**
@@ -119,15 +108,15 @@ public:
     }
 
     unittest {
-        auto m = new immutable Matrix!int;
+        immutable m = immutable Matrix!int(1, 1);
 
         // Make sure this doesn't actually duplicate.
-        assert(m.idup is m);
+        assert(m._data is m._data);
 
-        auto o = new Matrix!int;
+        auto o = Matrix!int(1, 1);
 
         // Make sure this still does.
-        assert(o.idup !is o);
+        assert(o.idup._data !is o._data);
     }
 
     /// Returns: True if the matrix is empty.
@@ -168,9 +157,9 @@ public:
     in {
         assert(row <= rowCount, "row out of bounds!");
     } body {
-        size_t off = offset(row);
+        size_t offset = row * _columnCount;
 
-        return _data[off .. off + _columnCount];
+        return _data[offset .. offset + _columnCount];
     }
 
     /**
@@ -185,7 +174,7 @@ public:
     in {
         assert(column <= columnCount, "column out of bounds!");
     } body {
-        return _data[offset(row) + column];
+        return _data[row * _columnCount + column];
     }
 
     /**
@@ -196,10 +185,10 @@ public:
         int result = 0;
 
         matrixLoop: foreach(row; 0 .. rowCount) {
-            size_t off = offset(row);
+            size_t offset = row * columnCount;
 
             foreach(column; 0 .. columnCount) {
-                result = dg(row, column, _data[off + column]);
+                result = dg(row, column, _data[offset + column]);
 
                 if (result) {
                     break matrixLoop;
@@ -228,7 +217,6 @@ public:
     (const Matrix!OtherNumber other)
     if((op == "+" || op == "-") && is(OtherNumber : Number))
     in {
-        assert(other !is null);
         assert(this.rowCount == other.rowCount);
         assert(this.columnCount == other.columnCount);
     } body {
@@ -247,9 +235,8 @@ public:
      */
     @safe pure nothrow
     Matrix!Number opBinary(string op, OtherNumber)
-    (const Matrix!OtherNumber other) const
+    (ref const Matrix!OtherNumber other) const
     if((op == "+" || op == "-") && is(OtherNumber : Number)) in {
-        assert(other !is null);
         assert(this.rowCount == other.rowCount);
         assert(this.columnCount == other.columnCount);
     } out(val) {
@@ -262,6 +249,14 @@ public:
         mixin(`result ` ~ op ~ `= other;`);
 
         return result;
+    }
+    
+    /// ditto
+    @safe pure nothrow
+    Matrix!Number opBinary(string op, OtherNumber)
+    (const Matrix!OtherNumber other) const
+    if((op == "+" || op == "-") && is(OtherNumber : Number)) {
+        opBinary!(op, OtherNumber)(other);
     }
 
     /**
@@ -278,15 +273,14 @@ public:
      */
     @safe pure nothrow
     Matrix!Number opBinary(string op, OtherNumber)
-    (const Matrix!OtherNumber other) const
+    (ref const Matrix!OtherNumber other) const
     if((op == "*") && is(OtherNumber : Number)) in {
-        assert(other !is null);
         assert(this.columnCount == other.rowCount);
     } out(val) {
         assert(val.rowCount == this.rowCount);
         assert(val.columnCount == other.columnCount);
     } body {
-        auto result = new Matrix!Number(this.rowCount, other.columnCount);
+        auto result = Matrix!Number(this.rowCount, other.columnCount);
 
         foreach(row; 0..result.rowCount) {
             foreach(column; 0..result.columnCount) {
@@ -301,6 +295,14 @@ public:
         }
 
         return result;
+    }
+    
+    /// ditto
+    @safe pure nothrow
+    Matrix!Number opBinary(string op, OtherNumber)
+    (const Matrix!OtherNumber other) const
+    if((op == "*") && is(OtherNumber : Number)) in {
+        opBinary!(op, OtherNumber)(other);
     }
 
     /**
@@ -331,15 +333,17 @@ public:
     /**
      * Returns: true if two matrices are equal and have the same type.
      */
-    override
     @safe pure nothrow
-    bool opEquals(Object o) const {
-        auto other = cast(typeof(this)) o;
-
-        return other !is null
-            && _rowCount == other._rowCount
+    bool opEquals(ref const Matrix!Number other) const {
+         return _rowCount == other._rowCount
             && _columnCount == other._columnCount
             && _data == other._data;
+    }
+    
+    /// ditto
+    @safe pure nothrow
+    bool opEquals(const Matrix!Number other) const {
+        return opEquals(other);
     }
 }
 
@@ -349,7 +353,7 @@ unittest {
     size_t columnCount = 3;
     int expectedValue = 42;
 
-    auto mat = new Matrix!int(rowCount, columnCount, [
+    auto mat = Matrix!int(rowCount, columnCount, [
         42, 42, 42,
         42, 42, 42,
         42, 42, 42,
@@ -373,7 +377,7 @@ unittest {
 
 // Test matrix referencing and copying
 unittest {
-    auto mat = new Matrix!int(3, 3);
+    auto mat = Matrix!int(3, 3);
 
     mat[0, 0] = 42;
 
@@ -388,7 +392,7 @@ unittest {
 
 // Test modifying a matrix row externally.
 unittest {
-    auto mat = new Matrix!int(3, 3);
+    auto mat = Matrix!int(3, 3);
 
     auto row = mat[0];
 
@@ -401,7 +405,7 @@ unittest {
 
 // Test immutable initialisation for a matrix
 unittest {
-    immutable mat = new immutable Matrix!int(3, 3, [
+    immutable mat = immutable Matrix!int(3, 3, [
         1, 2, 3,
         4, 5, 6,
         7, 8, 9
@@ -419,14 +423,14 @@ unittest {
         int leftValue = 8;
         byte rightValue = 10;
 
-        auto left = new Matrix!int(rowCount, columnCount, [
+        auto left = Matrix!int(rowCount, columnCount, [
             8, 8, 8, 8,
             8, 8, 8, 8,
             8, 8, 8, 8,
             8, 8, 8, 8,
         ]);
 
-        auto right = new Matrix!byte(rowCount, columnCount, [
+        auto right = Matrix!byte(rowCount, columnCount, [
             10, 10, 10, 10,
             10, 10, 10, 10,
             10, 10, 10, 10,
@@ -457,7 +461,7 @@ unittest {
         long matrixValue = 1_234_567;
         int scalar = 11;
 
-        auto matrix = new Matrix!long(rowCount, columnCount, [
+        auto matrix = Matrix!long(rowCount, columnCount, [
             matrixValue, matrixValue, matrixValue,
             matrixValue, matrixValue, matrixValue,
         ]);
@@ -488,13 +492,13 @@ unittest {
 unittest {
     // Test matrix equality.
 
-    auto left = new Matrix!int(3, 3, [
+    auto left = Matrix!int(3, 3, [
         1, 2, 3,
         4, 5, 6,
         7, 8, 9
     ]);
 
-    auto right = new immutable Matrix!int(3, 3, [
+    auto right = immutable Matrix!int(3, 3, [
         1, 2, 3,
         4, 5, 6,
         7, 8, 9
@@ -506,12 +510,12 @@ unittest {
 // Test matrix multiplication
 unittest {
     // Let's test the Wikipedia example, why not?
-    auto left = new Matrix!int(2, 3, [
+    auto left = Matrix!int(2, 3, [
         2, 3, 4,
         1, 0, 0
     ]);
 
-    auto right = new Matrix!int(3, 2, [
+    auto right = Matrix!int(3, 2, [
         0, 1000,
         1, 100,
         0, 10
@@ -535,72 +539,68 @@ unittest {
 /**
  * This class defines a range of rows over a matrix.
  */
-final class Rows(Number) if(isNumeric!Number) {
+struct Rows(Number) if(isNumeric!Number) {
 private:
-    const Matrix!Number _matrix;
-    size_t _currentRow;
-    size_t _upperBound;
-
-    // A private constructor used for saving the range.
-    @safe pure nothrow
-    this(const Matrix!Number matrix, size_t currentRow, size_t upperBound)
-    in {
-        assert(matrix !is null);
-    } body {
-        _matrix = matrix;
-        _currentRow = currentRow;
-        _upperBound = upperBound;
-    }
+    const(Number)[] _data;
+    size_t _columnCount;
 public:
     /**
      * Create a new rows range for a given matrix.
      */
     @safe pure nothrow
+    this(ref const Matrix!Number matrix) {
+        _data = matrix._data;
+        _columnCount = matrix._columnCount;
+    }
+    
+    /// ditto
+    @safe pure nothrow
     this(const Matrix!Number matrix) {
-        _matrix = matrix;
-        _upperBound = _matrix.rowCount;
+        this(matrix);
     }
 
     /// Returns: true if the range is empty.
     @safe pure nothrow
     @property bool empty() const {
-        return _currentRow >= _upperBound;
+        return _data.length == 0;
     }
 
     /// Advance to the next row.
     @safe pure nothrow
     void popFront() {
         assert(!empty, "Attempted popFront on an empty Rows range!");
-
-        ++_currentRow;
+        
+        _data = _data[_columnCount .. $];
     }
 
     /// Returns: The current row.
     @safe pure nothrow
     @property const(Number[]) front() const {
         assert(!empty, "Cannot get the front of an empty Rows range!");
-
-        return _matrix[_currentRow];
+        
+        return this[0];
     }
 
     /// Save a copy of this range.
     @safe pure nothrow
     Rows!Number save() const {
-        return new Rows!Number(_matrix, _currentRow, _upperBound);
+        return this;
     }
 
     /// Retreat a row backwards.
     @safe pure nothrow
     void popBack() {
         assert(!empty, "Attempted popBack on an empty Rows range!");
-
-        --_upperBound;
+        
+        _data = _data[0 .. $ - _columnCount];
     }
 
     /// Returns: The row at the end of the range.
     @safe pure nothrow
     @property const(Number[]) back() const {
-        return _matrix[_upperBound - 1];
+        assert(!empty, "Cannot get the back of an empty Rows range!");
+        
+        return this[$ - 1];
     }
 
     /**
@@ -614,13 +614,21 @@ public:
         assert(index >= 0, "Negative index given to Rows opIndex!");
         assert(index < length, "Out of bounds index given to Rows opIndex!");
     } body {
-        return _matrix[_currentRow + index];
+        size_t offset = index * _columnCount;
+        
+        return _data[offset .. offset + _columnCount];
     }
 
     /// Returns: The current length of the range.
     @safe pure nothrow
     @property size_t length() const {
-        return _upperBound - _currentRow;
+        return _data.length / _columnCount;
+    }
+    
+    /// ditto
+    @safe pure nothrow
+    @property size_t opDollar() const {
+        return length;
     }
 }
 
@@ -629,11 +637,11 @@ public:
  */
 @safe pure nothrow
 Rows!Number rows(Number)(Matrix!Number matrix) {
-    return new typeof(return)(matrix);
+    return typeof(return)(matrix);
 }
 
 unittest {
-    auto mat = new Matrix!int(3, 3, [
+    auto mat = Matrix!int(3, 3, [
         1, 2, 3,
         4, 5, 6,
         7, 8, 9
@@ -1057,13 +1065,11 @@ unittest {
  */
 @safe pure nothrow
 Matrix!Number transpose(Number)(const Matrix!Number matrix)
-in {
-    assert(matrix !is null);
-} out(val) {
+out(val) {
     assert(matrix.columnCount == val.rowCount);
     assert(matrix.rowCount == val.columnCount);
 } body {
-    auto result = new typeof(return)(matrix.columnCount, matrix.rowCount);
+    auto result = typeof(return)(matrix.columnCount, matrix.rowCount);
 
     foreach(row; 0 .. matrix.rowCount) {
         foreach(col; 0 .. matrix.columnCount) {
@@ -1099,7 +1105,7 @@ transpose(Number, size_t rowCount, size_t columnCount)
 }
 
 unittest {
-    auto matrix = new Matrix!int(2, 3, [
+    auto matrix = Matrix!int(2, 3, [
         1, 2, 3,
         0, -6, 7
     ]);
@@ -1115,7 +1121,7 @@ unittest {
 
 unittest {
     // When transposed twice, we should get the same matrix.
-    auto matrix = new Matrix!int(2, 3, [
+    auto matrix = Matrix!int(2, 3, [
         1, 2, 3,
         0, -6, 7
     ]);
