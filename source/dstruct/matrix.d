@@ -8,6 +8,24 @@ module dstruct.matrix;
 
 import std.traits;
 
+// A private implementation of matrix multiplication for use in types.
+private auto matrixMultiply(ResultType, T, U)
+(ref ResultType result, ref const(T) left, ref const(U) right) {
+    foreach(row; 0 .. result.rowCount) {
+        foreach(column; 0 .. result.columnCount) {
+            Unqual!(typeof(result[0, 0])) value = left[row, 0] * right[0, column];
+
+            foreach(pivot; 1 .. left.columnCount) {
+                value += left[row, pivot] * right[pivot, column];
+            }
+
+            result[row, column] = value;
+        }
+    }
+
+    return result;
+}
+
 /**
  * A matrix type. This is a 2D array of a guaranteed uniform size.
  */
@@ -282,17 +300,7 @@ public:
     } body {
         auto result = Matrix!Number(this.rowCount, other.columnCount);
 
-        foreach(row; 0..result.rowCount) {
-            foreach(column; 0..result.columnCount) {
-                Number value = this[row, 0] * other[0, column];
-
-                foreach(pivot; 1..this.columnCount) {
-                    value += this[row, pivot] * other[pivot, column];
-                }
-
-                result[row, column] = value;
-            }
-        }
+        matrixMultiply(result, this, other);
 
         return result;
     }
@@ -302,6 +310,31 @@ public:
     Matrix!Number opBinary(string op, OtherNumber)
     (const Matrix!OtherNumber other) const
     if((op == "*") && is(OtherNumber : Number)) in {
+        opBinary!(op, OtherNumber)(other);
+    }
+
+    /// ditto
+    @safe pure nothrow
+    Matrix!OtherNumber opBinary(string op, OtherNumber)
+    (ref const Matrix!OtherNumber other) const
+    if((op == "*") && !is(Number == OtherNumber) && is(Number : OtherNumber)) in {
+        assert(this.columnCount == other.rowCount);
+    } out(val) {
+        assert(val.rowCount == this.rowCount);
+        assert(val.columnCount == other.columnCount);
+    } body {
+        auto result = Matrix!OtherNumber(this.rowCount, other.columnCount);
+
+        matrixMultiply(result, this, other);
+
+        return result;
+    }
+
+    /// ditto
+    @safe pure nothrow
+    Matrix!OtherNumber opBinary(string op, OtherNumber)
+    (const Matrix!OtherNumber other) const 
+    if((op == "*") && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
         opBinary!(op, OtherNumber)(other);
     }
 
@@ -534,6 +567,15 @@ unittest {
             assert(result[i, j] == expected[i][j]);
         }
     }
+}
+
+// Test matrix multiplication, with a numeric type on the 
+// left which implicitly converts to the right.
+unittest {
+    auto left = Matrix!int(1, 1);
+    auto right = Matrix!long(1, 1);
+
+    Matrix!long result = left * right;
 }
 
 /**
@@ -859,6 +901,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
         return result;
     }
 
+    /// ditto
     @safe pure nothrow
     Matrix!(Number, rowCount, columnCount) opBinary(string op, OtherNumber)
     (const(Matrix!(OtherNumber, rowCount, columnCount)) other)
@@ -866,11 +909,57 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
         return opBinary(other);
     }
 
+    /**
+     * Multiply two matrices.
+     *
+     * Given a matrix of size (m, n) and a matrix of size (o, p).
+     * This operation can only work if n == o.
+     * The resulting matrix will be size (m, p).
+     *
+     * Params:
+     *     other = Another matrix
+     *
+     * Returns: The product of two matrices.
+     */
+    @safe pure nothrow
+    Matrix!(Number, rowCount, otherColumnCount) 
+    opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
+    (ref const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
+    if((op == "*") && is(OtherNumber : Number)) {
+        typeof(return) result;
+
+        matrixMultiply(result, this, other);
+
+        return result;
+    }
+
     /// ditto
     @safe pure nothrow
-    void opOpAssign(string op, OtherNumber)
-    (const(Matrix!(OtherNumber, rowCount, columnCount)) other) {
-        opOpAssign(other);
+    Matrix!(Number, rowCount, otherColumnCount) 
+    opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
+    (const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
+    if((op == "*") && is(OtherNumber : Number)) in {
+        return opBinary!(op, OtherNumber, otherRowCount, otherColumnCount)(other);
+    }
+
+    @safe pure nothrow
+    Matrix!(OtherNumber, rowCount, otherColumnCount) 
+    opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
+    (ref const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
+    if((op == "*") && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
+        typeof(return) result;
+
+        matrixMultiply(result, this, other);
+
+        return result;
+    }
+
+    @safe pure nothrow
+    Matrix!(OtherNumber, rowCount, otherColumnCount) 
+    opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
+    (const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
+    if((op == "*") && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
+        return opBinary!(op, OtherNumber, otherRowCount, otherColumnCount)(other);
     }
 }
 
@@ -1227,4 +1316,40 @@ unittest {
     foreach(row, col, value; finalMatrix) {
         assert(value == 0);
     }
+}
+
+// Test matrix multiplication on static matrices
+unittest {
+    auto left = Matrix!(int, 2, 3)(
+        2, 3, 4,
+        1, 0, 0
+    );
+
+    auto right = Matrix!(int, 3, 2)(
+        0, 1000,
+        1, 100,
+        0, 10
+    );
+
+    auto result = left * right;
+
+    int[][] expected = [
+        [3, 2340],
+        [0, 1000]
+    ];
+
+    foreach(i; 0..2) {
+        foreach(j; 0..2) {
+            assert(result[i, j] == expected[i][j]);
+        }
+    }
+}
+
+// Test matrix multiplication, with a numeric type on the 
+// left which implicitly converts to the right.
+unittest {
+    Matrix!(int, 1, 1) left;
+    Matrix!(long, 1, 1) right;
+
+    Matrix!(long, 1, 1) result = left * right;
 }
