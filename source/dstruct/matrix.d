@@ -622,6 +622,10 @@ public:
     /// Returns: The current length of the range.
     @safe pure nothrow
     @property size_t length() const {
+        if (_data.length == 0) {
+            return 0;
+        }
+
         return _data.length / _columnCount;
     }
     
@@ -691,6 +695,12 @@ unittest {
     assert(range3[0] == [4, 5, 6]);
 }
 
+// Test 0 size Matrix rows
+unittest {
+    Matrix!int mat;
+
+    assert(mat.rows.length == 0); 
+}
 
 /**
  * A static matrix type. This is a value matrix value type created directly
