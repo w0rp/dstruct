@@ -22,6 +22,8 @@ doesn't need to be built itself.
   matrix type.
 * [Matrix(T, rowCount, columnCount)](source/dstruct/matrix.d) - A static
   matrix value type.
+* [BasicGraph(T, edgeDirection)](source/dstruct/graph.d) - Directed
+  and undirected graph types.
 
 ## Design Philosophy
 
