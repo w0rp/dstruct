@@ -1,8 +1,8 @@
 module dstruct.graph;
 
 import std.algorithm;
+import std.array;
 
-import dstruct.set;
 import dstruct.map;
 
 /// The directionality of a graph.
@@ -13,16 +13,40 @@ enum EdgeDirection : bool {
     directed,
 }
 
+@safe pure nothrow
+private bool findAndRemove(T)(ref T[] arr, ref T needle) {
+    foreach(index; 0 .. arr.length) {
+        if (arr[index] == needle) {
+            foreach(newIndex; index .. arr.length - 1) {
+                arr[newIndex] = arr[newIndex + 1];
+            }
+
+            arr.length = arr.length - 1;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+@safe pure nothrow
+private void addIfMissing(T)(ref T[] arr, ref T value) {
+    if (arr.countUntil(value) < 0) {
+        arr ~= value;
+    }
+}
+
 /**
  * This struct represents a graph type as a reference type.
  *
  * Graphs types have a type of vertex and a direction.
+ *
+ * The graphs are represented by adjacency lists, which have good
+ * all-around performance characteristics for sparse graphs.
  */
 struct BasicGraph(Vertex, EdgeDirection edgeDirection) {
 private:
-    alias VertexSet = HashSet!Vertex;
-
-    VertexSet[Vertex] adjacencyMap;
+    Vertex[][Vertex] adjacencyMap;
 public:
     /// true if this graph is a directed graph.
     enum bool isDirected = edgeDirection == EdgeDirection.directed;
@@ -55,12 +79,12 @@ public:
             return false;
         }
 
-        // BUG: We have to catch the exception which never happens 
+        // BUG: We have to catch the exception which never happens
         // to make this nothrow, because the foreach isn't nothrow.
         try {
-            // Remove the vertex from all other sets.
-            foreach(set; adjacencyMap) {
-                set.remove(vertex);
+            // Remove the vertex from all the arrays.
+            foreach(ref list; adjacencyMap) {
+                findAndRemove(list, vertex);
             }
         } catch (Exception exception) {}
 
@@ -94,10 +118,10 @@ public:
      */
     @safe pure nothrow
     void addEdge(ref Vertex left, ref Vertex right) {
-        adjacencyMap.setDefault(left).add(right);
+        adjacencyMap.setDefault(left).addIfMissing(right);
 
         static if (!isDirected) {
-            adjacencyMap.setDefault(right).add(left);
+            adjacencyMap.setDefault(right).addIfMissing(left);
         } else {
             addVertex(right);
         }
@@ -130,16 +154,18 @@ public:
      */
     @safe pure nothrow
     bool removeEdge(ref Vertex left, ref Vertex right) {
-        auto setPtr = left in adjacencyMap;
+        auto listPtr = left in adjacencyMap;
 
-        if (!setPtr) {
+        if (listPtr is null) {
             return false;
         }
 
-        setPtr.remove(right);
+        if (!findAndRemove(*listPtr, right)) {
+            return false;
+        }
 
         static if (!isDirected) {
-            adjacencyMap[right].remove(left);
+            findAndRemove(adjacencyMap[right], left);
         }
 
         return true;
@@ -170,8 +196,8 @@ public:
      */
     @safe pure nothrow
     bool hasEdge(ref Vertex left, ref Vertex right) const {
-        if (auto setPtr = left in adjacencyMap) {
-            return right in *setPtr;
+        if (auto listPtr = left in adjacencyMap) {
+            return countUntil(*listPtr, right) > -1;
         }
 
         return false;
@@ -216,16 +242,15 @@ public:
      *
      * Returns: The number of directed edges in this graph.
      */
-    @trusted pure nothrow
+    @safe pure nothrow
     size_t directedEdgeCount() const {
         size_t count = 0;
 
-        // BUG: We have to catch the exception which never happens 
+        // BUG: We have to catch the exception which never happens
         // to make this nothrow, because the foreach isn't nothrow.
         try {
-            foreach(set; adjacencyMap) {
-                // BUG: .length is not @safe
-                count += set.length;
+            foreach(ref list; adjacencyMap) {
+                count += list.length;
             }
         } catch (Exception e) {}
 
