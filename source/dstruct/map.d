@@ -565,6 +565,7 @@ public:
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
+    ///
     @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
@@ -639,23 +640,27 @@ public:
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
+    ///
     @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
     }
 
+    ///
     @safe pure nothrow
     @property
     bool empty() const {
         return _entryRange.empty;
     }
 
+    ///
     @safe pure nothrow
     @property
     ref inout(V) front() inout {
         return _entryRange.front.value;
     }
 
+    ///
     @safe pure nothrow
     void popFront() {
         _entryRange.popFront();
@@ -745,23 +750,27 @@ public:
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
+    ///
     @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
     }
 
+    ///
     @safe pure nothrow
     @property
     bool empty() const {
         return _entryRange.empty;
     }
 
+    ///
     @safe pure nothrow
     @property
     inout(Item!(K, V)) front() inout {
         return typeof(return)(_entryRange.front);
     }
 
+    ///
     @safe pure nothrow
     void popFront() {
         _entryRange.popFront();
