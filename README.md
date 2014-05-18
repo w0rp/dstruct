@@ -17,6 +17,8 @@ doesn't need to be built itself.
   cannot be null.
 * [Option(T)](source/dstruct/option.d) - An Option/Maybe type for safer
   null handling.
+* [HashMap(K, V)](source/dstruct/map.d) - A garbage collected hashmap type,
+  just like associative arrays, but usable in more pure and @safe code.
 * [HashSet(T)](source/dstruct/set.d) - A garbage collected hashset type.
 * [Matrix(T)](source/dstruct/matrix.d) - A garbage collected dynamic
   matrix type.
