@@ -135,7 +135,7 @@ struct HashMap(K, V) {
     void opIndexAssign(V value, K key) {
         size_t hash = computeHash(key);
 
-        if (_length == 0) {
+        if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(4);
