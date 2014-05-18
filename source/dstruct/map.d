@@ -350,6 +350,8 @@ struct HashMap(K, V) {
     }
 
     /**
+     * The length of the map.
+     *
      * Returns: The number of entries in the map, in constant time.
      */
     @safe pure nothrow
