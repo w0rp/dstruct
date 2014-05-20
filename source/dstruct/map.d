@@ -26,7 +26,7 @@ private struct Entry(K, V) {
 
 @safe pure nothrow
 private size_t hashIndex(size_t hash, size_t length) {
-    return hash % length;
+    return hash & (length - 1);
 }
 
 private alias SafeGetHashType = size_t delegate(const(void*)) pure nothrow;
@@ -47,8 +47,6 @@ unittest {
     assert(computeHash(y) == 2);
     assert(computeHash(z) == 3);
 }
-
-private enum thresholdMultiplier = 0.75;
 
 /**
  * This struct implements a hashmap type, much like the standard associative
@@ -103,7 +101,7 @@ struct HashMap(K, V) {
     @safe pure nothrow
     private Entry!(K, V)* addNewEntry(
     size_t bucketIndex, size_t hash, ref K key, ref V value) {
-        if (++_length > bucket.length * thresholdMultiplier) {
+        if (++_length > bucket.length) {
             // The new length exceeds a threshold, so resize the bucket.
             resize(bucket.length * 2);
 
@@ -148,16 +146,41 @@ struct HashMap(K, V) {
 
         size_t bucketIndex = hashIndex(hash, bucket.length);
 
-        for (auto entry = bucket[bucketIndex]; entry; entry = entry.next) {
-            if (entry.key == key) {
-                // We found a key match, so update the value and return.
-                entry.value = value;
+        if (auto entry = bucket[bucketIndex]) {
+            do {
+                if (entry.key == key) {
+                    // We found a key match, so update the value and return.
+                    entry.value = value;
+                    return;
+                }
+            } while (entry.next !is null);
+
+            if (++_length <= bucket.length) {
+                // We can add on another without needing a resize.
+                entry.next = new Entry!(K, V)(hash, key, value);
                 return;
             }
+        } else if (++_length <= bucket.length) {
+            // We can slot this in right here without needing a resize.
+            bucket[bucketIndex] = new Entry!(K, V)(hash, key, value);
+            return;
         }
 
-        // By this point we know there is no key match, so add a new entry.
-        addNewEntry(bucketIndex, hash, key, value);
+        // The new length exceeds a threshold, so resize the bucket.
+        resize(bucket.length * 2);
+
+        // Compute the index again, as it has changed.
+        bucketIndex = hashIndex(hash, bucket.length);
+
+        if (auto entry = bucket[bucketIndex]) {
+            while (entry.next !is null) {
+                entry = entry.next;
+            }
+
+            entry.next = new Entry!(K, V)(hash, key, value);
+        } else {
+            bucket[bucketIndex] = new Entry!(K, V)(hash, key, value);
+        }
     }
 
     /**
