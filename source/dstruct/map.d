@@ -3,6 +3,22 @@ module dstruct.map;
 import core.memory;
 import core.exception;
 
+import std.range;
+
+private template Promote(Wrapper, Subtype) {
+    static if(is(Wrapper == immutable)) {
+        alias Promote = immutable(Subtype);
+    } else static if(is(Wrapper == const)) {
+        static if(is(Subtype == immutable)) {
+            alias Promote = Subtype;
+        } else {
+            alias Promote = const(Subtype);
+        }
+    } else {
+        alias Promote = Subtype;
+    }
+}
+
 private struct Entry(K, V) {
     Entry* next;
     size_t hash;
@@ -25,7 +41,9 @@ private struct Entry(K, V) {
 }
 
 @safe pure nothrow
-private size_t hashIndex(size_t hash, size_t length) {
+private size_t hashIndex(size_t hash, size_t length) in {
+    assert(length > 0);
+} body {
     return hash & (length - 1);
 }
 
@@ -57,12 +75,14 @@ unittest {
  * An empty map will be a valid object, and will not result in any allocations.
  */
 struct HashMap(K, V) {
+    alias ThisType = typeof(this);
+
     private Entry!(K, V)*[] bucket;
     private size_t _length;
 
     @trusted pure nothrow
     private Entry!(K, V)* topEntry(ref K key) const {
-        return cast(Entry!(K, V)*)
+        return cast(typeof(return))
             bucket[hashIndex(computeHash(key), bucket.length)];
     }
 
@@ -72,9 +92,9 @@ struct HashMap(K, V) {
     } body {
         auto newBucket = new Entry!(K, V)*[newBucketLength];
 
-        foreach(Entry!(K, V)* entry; bucket) {
+        foreach(entry; bucket) {
             while (entry !is null) {
-                Entry!(K, V)* oldNext = entry.next;
+                auto oldNext = entry.next;
                 entry.next = null;
 
                 size_t index = hashIndex(entry.hash, newBucket.length);
@@ -82,7 +102,7 @@ struct HashMap(K, V) {
                 if (newBucket[index] is null) {
                     newBucket[index] = entry;
                 } else {
-                    Entry!(K, V)* newPrev = newBucket[index];
+                    auto newPrev = newBucket[index];
 
                     while (newPrev.next !is null) {
                         newPrev = newPrev.next;
@@ -99,26 +119,25 @@ struct HashMap(K, V) {
     }
 
     @safe pure nothrow
-    private Entry!(K, V)* addNewEntry(
-    size_t bucketIndex, size_t hash, ref K key, ref V value) {
+    private auto addNewEntry(size_t bucketIndex, Entry!(K, V)* newEntry) {
         if (++_length > bucket.length) {
             // The new length exceeds a threshold, so resize the bucket.
             resize(bucket.length * 2);
 
             // Compute the index again, as it has changed.
-            bucketIndex = hashIndex(hash, bucket.length);
+            bucketIndex = hashIndex(newEntry.hash, bucket.length);
         }
 
         if (bucket[bucketIndex] is null) {
-            return bucket[bucketIndex] = new Entry!(K, V)(hash, key, value);
+            return bucket[bucketIndex] = newEntry;
         } else {
-            Entry!(K, V)* entry = bucket[bucketIndex];
+            auto entry = bucket[bucketIndex];
 
             while (entry.next !is null) {
                 entry = entry.next;
             }
 
-            return entry.next = new Entry!(K, V)(hash, key, value);
+            return entry.next = newEntry;
         }
     }
 
@@ -293,6 +312,17 @@ struct HashMap(K, V) {
     @trusted pure
     ref V setDefault(V2)(K key, lazy V2 value) if (is(V2 : V)) {
         size_t hash = computeHash(key);
+
+        if (bucket.length == 0) {
+            // 0 length is a special case.
+            _length = 1;
+            resize(4);
+
+            // Add in the first value.
+            return (bucket[hashIndex(hash, bucket.length)] =
+                new Entry!(K, V)(hash, key, value)).value;
+        }
+
         size_t bucketIndex = hashIndex(hash, bucket.length);
 
         for (auto entry = bucket[bucketIndex]; entry; entry = entry.next) {
@@ -301,8 +331,10 @@ struct HashMap(K, V) {
             }
         }
 
-        V tempValue = value;
-        return addNewEntry(bucketIndex, hash, key, tempValue).value;
+        return addNewEntry(
+            bucketIndex, 
+            new Entry!(K, V)(hash, key, value)
+        ).value;
     }
 
     /**
@@ -323,6 +355,17 @@ struct HashMap(K, V) {
     @trusted pure nothrow
     ref V setDefault(K key) {
         size_t hash = computeHash(key);
+
+        if (bucket.length == 0) {
+            // 0 length is a special case.
+            _length = 1;
+            resize(4);
+
+            // Add in the first value.
+            return (bucket[hashIndex(hash, bucket.length)] =
+                new Entry!(K, V)(hash, key, V.init)).value;
+        }
+
         size_t bucketIndex = hashIndex(hash, bucket.length);
 
         for (auto entry = bucket[bucketIndex]; entry; entry = entry.next) {
@@ -331,8 +374,10 @@ struct HashMap(K, V) {
             }
         }
 
-        V value;
-        return addNewEntry(bucketIndex, hash, key, value).value;
+        return addNewEntry(
+            bucketIndex, 
+            new Entry!(K, V)(hash, key, V.init)
+        ).value;
     }
 
     /**
@@ -379,12 +424,18 @@ struct HashMap(K, V) {
      */
     @safe pure nothrow
     @property
-    size_t length() {
+    size_t length() const {
         return _length;
     }
 }
 
+template HashMapKeyType(T) {
+    alias HashMapKeyType = typeof(ElementType!(typeof(T.bucket)).key);
+}
 
+template HashMapValueType(T) {
+    alias HashMapValueType = typeof(ElementType!(typeof(T.bucket)).value);
+}
 
 // Check setting values, retrieval, removal, and lengths.
 unittest {
@@ -507,20 +558,25 @@ private struct EntryRange(K, V) {
 private:
     Entry!(K, V)*[] _bucket;
     Entry!(K, V)* _entry;
-    size_t _index;
 public:
     @safe pure nothrow
-    this(ref Entry!(K, V)*[] bucket) {
-        do {
-            _entry = bucket[_index];
+    this(Entry!(K, V)*[] bucket) {
+        _bucket = bucket;
+
+        while(_bucket.length > 0) {
+            _entry = _bucket[0];
 
             if (_entry !is null) {
-                // Only hold a reference to the bucket in the range if
-                // we find an entry to start the range with.
-                _bucket = bucket;
                 return;
             }
-        } while (++_index < bucket.length);
+
+            _bucket = _bucket[1 .. $];
+        } 
+    }
+
+    @trusted pure nothrow
+    this(const(Entry!(K, V)*[]) bucket) {
+        this(cast(Entry!(K, V)*[]) bucket);
     }
 
     @safe pure nothrow
@@ -556,24 +612,22 @@ public:
             return;
         }
 
-        if (++_index >= _bucket.length) {
-            // Advancing takes us out of the bucket, so clear all references
-            // from the range now, which means the bucket can be collected
-            // if it is no longer referenced elsewhere.
-            _entry = null;
-            _bucket = null;
-            return;
-        }
+        _bucket = _bucket[1 .. $];
 
         // Keep advancing until we find the start of another linked list,
         // or we run off the end.
-        do {
-            _entry = _bucket[_index];
+        while (_bucket.length > 0) {
+            _entry = _bucket[0];
 
             if (_entry !is null) {
                 return;
             }
-        } while (++_index < _bucket.length);
+
+            _bucket = _bucket[1 .. $];
+        }
+
+        // Clear the entry if we hit the end.
+        _entry = null;
     }
 }
 
@@ -584,7 +638,8 @@ struct KeyRange(K, V) {
 private:
     EntryRange!(K, V) _entryRange;
 public:
-    private this(ref Entry!(K, V)*[] bucket) {
+    @safe pure nothrow
+    private this()(auto ref Entry!(K, V)*[] bucket) {
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
@@ -602,7 +657,7 @@ public:
     }
 
     ///
-    @safe pure nothrow
+    @trusted pure nothrow
     @property
     ref inout(K) front() inout {
         return _entryRange.front.key;
@@ -624,14 +679,32 @@ public:
  *     A range running through the keys in the map.
  */
 @safe pure nothrow
-KeyRange!(K, V) keys(K, V)(ref HashMap!(K, V) map) {
+auto keys(K, V)(auto ref HashMap!(K, V) map) {
     return KeyRange!(K, V)(map.bucket);
 }
 
 /// ditto
-@safe pure nothrow
-KeyRange!(K, V) keys(K, V)(HashMap!(K, V) map) {
-    return keys(map);
+@trusted pure nothrow
+auto keys(K, V)(auto ref const(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    return KeyRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)*[])
+        map.bucket
+    );
+}
+
+/// ditto
+@trusted pure nothrow
+auto keys(K, V)(auto ref immutable(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    return KeyRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)*[])
+        map.bucket
+    );
 }
 
 unittest {
@@ -651,6 +724,20 @@ unittest {
     assert(keyList == [1, 2, 3]);
 }
 
+unittest {
+    HashMap!(string, string) mmap;
+    const(HashMap!(string, string)) cmap;
+    immutable(HashMap!(string, string)) imap;
+
+    auto mKeys = mmap.keys();
+    auto cKeys = cmap.keys();
+    auto iKeys = imap.keys();
+
+    assert(is(typeof(mKeys.front) == string));
+    assert(is(typeof(cKeys.front) == const(string)));
+    assert(is(typeof(iKeys.front) == immutable(string)));
+}
+
 /**
  * This is a range which runs through a series of values in a map.
  */
@@ -659,7 +746,7 @@ private:
     EntryRange!(K, V) _entryRange;
 public:
     @safe pure nothrow
-    private this(ref Entry!(K, V)*[] bucket) {
+    private this()(auto ref Entry!(K, V)*[] bucket) {
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
@@ -677,7 +764,7 @@ public:
     }
 
     ///
-    @safe pure nothrow
+    @trusted pure nothrow
     @property
     ref inout(V) front() inout {
         return _entryRange.front.value;
@@ -699,14 +786,32 @@ public:
  *     A range running through the values in the map.
  */
 @safe pure nothrow
-ValueRange!(K, V) values(K, V)(ref HashMap!(K, V) map) {
+auto values(K, V)(auto ref HashMap!(K, V) map) {
     return ValueRange!(K, V)(map.bucket);
 }
 
 /// ditto
-@safe pure nothrow
-ValueRange!(K, V) values(K, V)(HashMap!(K, V) map) {
-    return values(map);
+@trusted pure nothrow
+auto values(K, V)(auto ref const(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    return ValueRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)*[])
+        map.bucket
+    );
+}
+
+/// ditto
+@trusted pure nothrow
+auto values(K, V)(auto ref immutable(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    return ValueRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)*[])
+        map.bucket
+    );
 }
 
 unittest {
@@ -724,6 +829,20 @@ unittest {
 
     // From the way the buckets are distributed, we know we'll get this back.
     assert(valueList == ["a", "b", "c"]);
+}
+
+unittest {
+    HashMap!(string, string) mmap;
+    const(HashMap!(string, string)) cmap;
+    immutable(HashMap!(string, string)) imap;
+
+    auto mValues = mmap.values();
+    auto cValues = cmap.values();
+    auto iValues = imap.values();
+
+    assert(is(typeof(mValues.front) == string));
+    assert(is(typeof(cValues.front) == const(string)));
+    assert(is(typeof(iValues.front) == immutable(string)));
 }
 
 /**
@@ -769,7 +888,8 @@ struct ItemRange(K, V) {
 private:
     EntryRange!(K, V) _entryRange;
 public:
-    this (ref Entry!(K, V)*[] bucket) {
+    @safe pure nothrow
+    private this()(auto ref Entry!(K, V)*[] bucket) {
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
@@ -809,14 +929,32 @@ public:
  *     A range running through the items in the map.
  */
 @safe pure nothrow
-ItemRange!(K, V) items(K, V)(ref HashMap!(K, V) map) {
+auto items(K, V)(auto ref HashMap!(K, V) map) {
     return ItemRange!(K, V)(map.bucket);
 }
 
 /// ditto
-@safe pure nothrow
-ItemRange!(K, V) items(K, V)(HashMap!(K, V) map) {
-    return items(map);
+@trusted pure nothrow
+auto items(K, V)(auto ref const(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    return ItemRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)*[])
+        map.bucket
+    );
+}
+
+/// ditto
+@trusted pure nothrow
+auto items(K, V)(auto ref immutable(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    return ItemRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)*[])
+        map.bucket
+    );
 }
 
 unittest {
@@ -837,6 +975,23 @@ unittest {
     // From the way the buckets are distributed, we know we'll get this back.
     assert(keyList == [1, 2, 3]);
     assert(valueList == ["a", "b", "c"]);
+}
+
+unittest {
+    HashMap!(string, string) mmap;
+    const(HashMap!(string, string)) cmap;
+    immutable(HashMap!(string, string)) imap;
+
+    auto mItems = mmap.items();
+    auto cItems = cmap.items();
+    auto iItems = imap.items();
+
+    assert(is(typeof(mItems.front.key) == string));
+    assert(is(typeof(cItems.front.key) == const(string)));
+    assert(is(typeof(iItems.front.key) == immutable(string)));
+    assert(is(typeof(mItems.front.value) == string));
+    assert(is(typeof(cItems.front.value) == const(string)));
+    assert(is(typeof(iItems.front.value) == immutable(string)));
 }
 
 // Test that the ranges can be created from r-values.

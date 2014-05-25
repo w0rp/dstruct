@@ -1,7 +1,9 @@
 module dstruct.graph;
 
 import std.algorithm;
+import std.range;
 import std.array;
+import std.typecons;
 
 import dstruct.map;
 
@@ -46,7 +48,7 @@ private void addIfMissing(T)(ref T[] arr, ref T value) {
  */
 struct BasicGraph(Vertex, EdgeDirection edgeDirection) {
 private:
-    Vertex[][Vertex] adjacencyMap;
+    HashMap!(Vertex, Vertex[]) adjacencyMap;
 public:
     /// true if this graph is a directed graph.
     enum bool isDirected = edgeDirection == EdgeDirection.directed;
@@ -79,14 +81,9 @@ public:
             return false;
         }
 
-        // BUG: We have to catch the exception which never happens
-        // to make this nothrow, because the foreach isn't nothrow.
-        try {
-            // Remove the vertex from all the arrays.
-            foreach(ref list; adjacencyMap) {
-                findAndRemove(list, vertex);
-            }
-        } catch (Exception exception) {}
+        foreach(ref list; adjacencyMap.values) {
+            findAndRemove(list, vertex);
+        }
 
         return true;
     }
@@ -249,7 +246,7 @@ public:
         // BUG: We have to catch the exception which never happens
         // to make this nothrow, because the foreach isn't nothrow.
         try {
-            foreach(ref list; adjacencyMap) {
+            foreach(ref list; adjacencyMap.values()) {
                 count += list.length;
             }
         } catch (Exception e) {}
