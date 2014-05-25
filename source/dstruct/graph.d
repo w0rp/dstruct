@@ -270,6 +270,14 @@ public:
     }
 }
 
+/**
+ * An edge in a graph.
+ */
+struct Edge(V) {
+    V from;
+    V to;
+}
+
 /// A shorthand for an undirected graph.
 alias Graph(Vertex) = BasicGraph!(Vertex, EdgeDirection.undirected);
 
@@ -393,4 +401,250 @@ unittest {
     assert(graph.removeVertex(1));
     assert(graph.edgeCount == 1);
     assert(graph.hasEdge(2, 3));
+}
+
+/**
+ * A range through the vertices of a graph.
+ */
+struct VertexRange(V, VArr) {
+private:
+    KeyRange!(V, VArr) _keyRange;
+
+    @safe pure nothrow
+    this (typeof(_keyRange) keyRange) {
+        _keyRange = keyRange;
+    }
+public:
+    ///
+    @safe pure nothrow
+    inout(typeof(this)) save() inout {
+        return this;
+    }
+
+    ///
+    @safe pure nothrow
+    @property
+    bool empty() const {
+        return _keyRange.empty;
+    }
+
+    ///
+    @safe pure nothrow
+    @property
+    ref inout(V) front() inout {
+        return _keyRange.front;
+    }
+
+    ///
+    @safe pure nothrow
+    void popFront() {
+        _keyRange.popFront();
+    }
+}
+
+/**
+ * Given any type of graph, produce a range through the vertices of the graph.
+ * 
+ * Params:
+ *     graph = A graph.
+ * 
+ * Returns:
+ *     A ForwardRange through the vertices of the graph.
+ */
+@safe pure nothrow
+auto vertices(V, EdgeDirection edgeDirection)
+(auto ref BasicGraph!(V, edgeDirection) graph) {
+    return VertexRange!(V, V[])(graph.adjacencyMap.keys);
+}
+
+/// ditto
+@trusted pure nothrow
+auto vertices(V, EdgeDirection edgeDirection)
+(auto ref const(BasicGraph!(V, edgeDirection)) graph) {
+    return VertexRange!(const(V), const(V[]))(
+        cast(KeyRange!(const(V), const(V[])))
+        graph.adjacencyMap.keys
+    );
+}
+
+/// ditto
+@trusted pure nothrow
+auto vertices(V, EdgeDirection edgeDirection)
+(auto ref immutable(BasicGraph!(V, edgeDirection)) graph) {
+    return VertexRange!(immutable(V), immutable(V[]))(
+        cast(KeyRange!(immutable(V), immutable(V[])))
+        graph.adjacencyMap.keys
+    );
+}
+
+unittest {
+    Digraph!string graph;
+
+    graph.addEdge("a", "b");
+    graph.addEdge("a", "c");
+    graph.addEdge("a", "d");
+    graph.addEdge("b", "e");
+    graph.addEdge("b", "f");
+    graph.addEdge("b", "g");
+
+    string[] vertexList;
+
+    foreach(vertex; graph.vertices) {
+        vertexList ~= vertex;
+    }
+
+    // We know we will get this order from how the hashing works.
+    assert(vertexList == ["a", "b", "c", "d", "e", "f", "g"]);
+}
+
+unittest {
+    Graph!string mGraph;
+    const(Graph!string) cGraph;
+    immutable(Graph!string) iGraph;
+
+    auto mVertices = mGraph.vertices();
+    auto cVertices = cGraph.vertices();
+    auto iVertices = iGraph.vertices();
+
+    assert(is(typeof(mVertices.front) == string));
+    assert(is(typeof(cVertices.front) == const(string)));
+    assert(is(typeof(iVertices.front) == immutable(string)));
+}
+
+/**
+ * A range through the edges of a graph.
+ */
+struct EdgeRange(V, VArr) {
+private:
+    ItemRange!(V, VArr) _itemRange;
+    size_t _outgoingIndex;
+
+    @safe pure nothrow
+    this (typeof(_itemRange) itemRange) {
+        _itemRange = itemRange;
+
+        // Advance until we find an edge.
+        while (!_itemRange.empty && _itemRange.front.value.length == 0) {
+            _itemRange.popFront;
+        }
+    }
+public:
+    ///
+    @safe pure nothrow
+    inout(typeof(this)) save() inout {
+        return this;
+    }
+
+    ///
+    @safe pure nothrow
+    @property
+    bool empty() const {
+        return _itemRange.empty;
+    }
+
+    ///
+    @safe pure nothrow
+    @property
+    Edge!V front() const {
+        auto item = _itemRange.front;
+
+        return Edge!V(item.key, item.value[_outgoingIndex]);
+    }
+
+    ///
+    @safe pure nothrow
+    void popFront() {
+        if (++_outgoingIndex < _itemRange.front.value.length) {
+            // There's another outgoing edge in the list, so move to that.
+            return;
+        }
+
+        // We have to find the next vertex with a non-empty adjacency list.
+        _outgoingIndex = 0;
+
+        do {
+            _itemRange.popFront;
+        } while (!_itemRange.empty && _itemRange.front.value.length == 0);
+    }
+}
+
+/**
+ * Given any type of graph, produce a range through the edges of the graph.
+ * 
+ * Params:
+ *     graph = A graph.
+ * 
+ * Returns:
+ *     A ForwardRange through the edges of the graph.
+ */
+@safe pure nothrow
+auto edges(V, EdgeDirection edgeDirection)
+(auto ref BasicGraph!(V, edgeDirection) graph) {
+    return EdgeRange!(V, V[])(graph.adjacencyMap.items);
+}
+
+/// ditto
+@trusted pure nothrow
+auto edges(V, EdgeDirection edgeDirection)
+(auto ref const(BasicGraph!(V, edgeDirection)) graph) {
+    return EdgeRange!(const(V), const(V[]))(
+        cast(ItemRange!(const(V), const(V[])))
+        graph.adjacencyMap.items
+    );
+}
+
+/// ditto
+@trusted pure nothrow
+auto edges(V, EdgeDirection edgeDirection)
+(auto ref immutable(BasicGraph!(V, edgeDirection)) graph) {
+    return EdgeRange!(immutable(V), immutable(V[]))(
+        cast(ItemRange!(immutable(V), immutable(V[])))
+        graph.adjacencyMap.items
+    );
+}
+
+unittest {
+    Digraph!string graph;
+
+    graph.addEdge("a", "b");
+    graph.addEdge("a", "c");
+    graph.addEdge("a", "d");
+    graph.addEdge("b", "e");
+    graph.addEdge("b", "f");
+    graph.addEdge("b", "g");
+
+    Edge!string[] edgeList;
+
+    foreach(edge; graph.edges) {
+        edgeList ~= edge;
+    }
+
+    // We know we will get this order from how the hashing works.
+    assert(edgeList.length);
+    assert(edgeList[0].from == "a");
+    assert(edgeList[0].to == "b");
+    assert(edgeList[1].from == "a");
+    assert(edgeList[1].to == "c");
+    assert(edgeList[2].from == "a");
+    assert(edgeList[2].to == "d");
+    assert(edgeList[3].from == "b");
+    assert(edgeList[3].to == "e");
+    assert(edgeList[4].from == "b");
+    assert(edgeList[4].to == "f");
+    assert(edgeList[5].from == "b");
+    assert(edgeList[5].to == "g");
+}
+
+unittest {
+    Graph!string mGraph;
+    const(Graph!string) cGraph;
+    immutable(Graph!string) iGraph;
+
+    auto mVertices = mGraph.edges();
+    auto cVertices = cGraph.edges();
+    auto iVertices = iGraph.edges();
+
+    assert(is(typeof(mVertices.front) == Edge!string));
+    assert(is(typeof(cVertices.front) == Edge!(const(string))));
+    assert(is(typeof(iVertices.front) == Edge!(immutable(string))));
 }
