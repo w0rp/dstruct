@@ -5,19 +5,7 @@ import core.exception;
 
 import std.range;
 
-private template Promote(Wrapper, Subtype) {
-    static if(is(Wrapper == immutable)) {
-        alias Promote = immutable(Subtype);
-    } else static if(is(Wrapper == const)) {
-        static if(is(Subtype == immutable)) {
-            alias Promote = Subtype;
-        } else {
-            alias Promote = const(Subtype);
-        }
-    } else {
-        alias Promote = Subtype;
-    }
-}
+import dstruct.support;
 
 private struct Entry(K, V) {
     Entry* next;
@@ -25,14 +13,14 @@ private struct Entry(K, V) {
     K key;
     V value;
 
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this(size_t _hash, ref K _key, ref V _value) {
         hash = _hash;
         key = _key;
         value = _value;
     }
 
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this(size_t _hash, ref K _key, V _value) {
         hash = _hash;
         key = _key;
@@ -40,16 +28,22 @@ private struct Entry(K, V) {
     }
 }
 
-@safe pure nothrow
+@nogc @safe pure nothrow
 private size_t hashIndex(size_t hash, size_t length) in {
     assert(length > 0);
 } body {
     return hash & (length - 1);
 }
 
-private alias SafeGetHashType = size_t delegate(const(void*)) pure nothrow;
+static if(__VERSION__ < 2066) {
+    private alias SafeGetHashType = size_t delegate(const(void*)) pure nothrow;
+} else {
+    // Use mixin to hide UDA errors from old D compilers, it will never
+    // execute the mixin, so it won't report an error in syntax.
+    mixin("private alias SafeGetHashType = size_t delegate(const(void*)) @nogc pure nothrow;");
+}
 
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 private size_t computeHash(K)(ref K key) {
     // Cast so we can keep our function qualifiers.
     return (cast(SafeGetHashType) &(typeid(K).getHash))(&key);
@@ -80,7 +74,7 @@ struct HashMap(K, V) {
     private Entry!(K, V)*[] bucket;
     private size_t _length;
 
-    @trusted pure nothrow
+    @nogc @trusted pure nothrow
     private Entry!(K, V)* topEntry(ref K key) const {
         return cast(typeof(return))
             bucket[hashIndex(computeHash(key), bucket.length)];
@@ -214,7 +208,7 @@ struct HashMap(K, V) {
      * Returns:
      *     A pointer to a value, a null pointer if a value is not set.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     V* opBinaryRight(string op)(K key) const if (op == "in") {
         for (auto entry = topEntry(key); entry; entry = entry.next) {
             if (entry.key == key) {
@@ -237,7 +231,7 @@ struct HashMap(K, V) {
      * Returns:
      *     A value from the map.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     ref V opIndex(K key) const {
         for (auto entry = topEntry(key); entry; entry = entry.next) {
             if (entry.key == key) {
@@ -245,8 +239,7 @@ struct HashMap(K, V) {
             }
         }
 
-        onRangeError();
-        assert(false);
+        assert(false, "Key not found in HashMap!");
     }
 
     /**
@@ -281,7 +274,7 @@ struct HashMap(K, V) {
      * Returns:
      *     A value from the map, or the default value.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     V get(K key) const {
         for (auto entry = topEntry(key); entry; entry = entry.next) {
             if (entry.key == key) {
@@ -332,7 +325,7 @@ struct HashMap(K, V) {
         }
 
         return addNewEntry(
-            bucketIndex, 
+            bucketIndex,
             new Entry!(K, V)(hash, key, value)
         ).value;
     }
@@ -375,7 +368,7 @@ struct HashMap(K, V) {
         }
 
         return addNewEntry(
-            bucketIndex, 
+            bucketIndex,
             new Entry!(K, V)(hash, key, V.init)
         ).value;
     }
@@ -389,7 +382,7 @@ struct HashMap(K, V) {
      * Returns:
      *     true if a value was removed, otherwise false.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool remove(K key) {
         size_t bucketIndex = hashIndex(computeHash(key), bucket.length);
         auto arr = bucket[bucketIndex];
@@ -422,7 +415,7 @@ struct HashMap(K, V) {
      *
      * Returns: The number of entries in the map, in constant time.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     size_t length() const {
         return _length;
@@ -559,7 +552,7 @@ private:
     Entry!(K, V)*[] _bucket;
     Entry!(K, V)* _entry;
 public:
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this(Entry!(K, V)*[] bucket) {
         _bucket = bucket;
 
@@ -571,41 +564,37 @@ public:
             }
 
             _bucket = _bucket[1 .. $];
-        } 
+        }
     }
 
-    @trusted pure nothrow
+    @nogc @trusted pure nothrow
     this(const(Entry!(K, V)*[]) bucket) {
         this(cast(Entry!(K, V)*[]) bucket);
     }
 
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
     }
 
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     bool empty() const {
         return _entry is null;
     }
 
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
-    inout(Entry!(K, V)*) front() inout {
-        if (empty()) {
-            onRangeError();
-        }
-
+    inout(Entry!(K, V)*) front() inout in {
+        assert(!empty());
+    } body {
         return _entry;
     }
 
-    @safe pure nothrow
-    void popFront() {
-        if (empty()) {
-            onRangeError();
-        }
-
+    @nogc @safe pure nothrow
+    void popFront() in {
+        assert(!empty());
+    } body {
         if (_entry.next !is null) {
             // We have a another entry in the linked list, so skip to that.
             _entry = _entry.next;
@@ -638,33 +627,33 @@ struct KeyRange(K, V) {
 private:
     EntryRange!(K, V) _entryRange;
 public:
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     private this()(auto ref Entry!(K, V)*[] bucket) {
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     bool empty() const {
         return _entryRange.empty;
     }
 
     ///
-    @trusted pure nothrow
+    @nogc @trusted pure nothrow
     @property
     ref inout(K) front() inout {
         return _entryRange.front.key;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     void popFront() {
         _entryRange.popFront();
     }
@@ -678,13 +667,13 @@ public:
  * Returns:
  *     A range running through the keys in the map.
  */
-@safe pure nothrow
+@nogc @safe pure nothrow
 auto keys(K, V)(auto ref HashMap!(K, V) map) {
     return KeyRange!(K, V)(map.bucket);
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto keys(K, V)(auto ref const(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
@@ -696,7 +685,7 @@ auto keys(K, V)(auto ref const(HashMap!(K, V)) map) {
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto keys(K, V)(auto ref immutable(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
@@ -745,33 +734,34 @@ struct ValueRange(K, V) {
 private:
     EntryRange!(K, V) _entryRange;
 public:
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     private this()(auto ref Entry!(K, V)*[] bucket) {
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     bool empty() const {
         return _entryRange.empty;
     }
 
     ///
-    @trusted pure nothrow
+    @nogc @trusted pure nothrow
     @property
     ref inout(V) front() inout {
         return _entryRange.front.value;
     }
 
     ///
-    @safe pure nothrow
+
+    @nogc @safe pure nothrow
     void popFront() {
         _entryRange.popFront();
     }
@@ -785,13 +775,13 @@ public:
  * Returns:
  *     A range running through the values in the map.
  */
-@safe pure nothrow
+@nogc @safe pure nothrow
 auto values(K, V)(auto ref HashMap!(K, V) map) {
     return ValueRange!(K, V)(map.bucket);
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto values(K, V)(auto ref const(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
@@ -803,7 +793,7 @@ auto values(K, V)(auto ref const(HashMap!(K, V)) map) {
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto values(K, V)(auto ref immutable(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
@@ -854,7 +844,7 @@ struct Item(K, V) {
 private:
     Entry!(K, V)* _entry;
 
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this(inout(Entry!(K, V)*) entry) inout in {
         assert(entry !is null);
     } body {
@@ -867,7 +857,7 @@ public:
     /**
      * A key from the map.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property ref inout(K) key() inout {
         return _entry.key;
     }
@@ -875,7 +865,7 @@ public:
     /**
      * A value from the map.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property ref inout(V) value() inout {
         return _entry.value;
     }
@@ -888,33 +878,33 @@ struct ItemRange(K, V) {
 private:
     EntryRange!(K, V) _entryRange;
 public:
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     private this()(auto ref Entry!(K, V)*[] bucket) {
         _entryRange = EntryRange!(K, V)(bucket);
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     bool empty() const {
         return _entryRange.empty;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     inout(Item!(K, V)) front() inout {
         return typeof(return)(_entryRange.front);
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     void popFront() {
         _entryRange.popFront();
     }
@@ -928,13 +918,13 @@ public:
  * Returns:
  *     A range running through the items in the map.
  */
-@safe pure nothrow
+@nogc @safe pure nothrow
 auto items(K, V)(auto ref HashMap!(K, V) map) {
     return ItemRange!(K, V)(map.bucket);
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto items(K, V)(auto ref const(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
@@ -946,7 +936,7 @@ auto items(K, V)(auto ref const(HashMap!(K, V)) map) {
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto items(K, V)(auto ref immutable(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
@@ -1030,7 +1020,7 @@ unittest {
  * Returns:
  *     A reference to the value in the associative array.
  */
-@safe pure nothrow
+@safe pure
 ref V1 setDefault(K, V1, V2)(ref V1[K] map, K key, lazy V2 def)
 if (is(V2 : V1)) {
     V1* valPtr = key in map;

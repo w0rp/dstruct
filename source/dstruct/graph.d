@@ -5,6 +5,7 @@ import std.range;
 import std.array;
 import std.typecons;
 
+import dstruct.support;
 import dstruct.map;
 
 /// The directionality of a graph.
@@ -15,7 +16,7 @@ enum EdgeDirection : bool {
     directed,
 }
 
-@safe pure nothrow
+@nogc @safe pure nothrow
 private bool findAndRemove(T)(ref T[] arr, ref T needle) {
     foreach(index; 0 .. arr.length) {
         if (arr[index] == needle) {
@@ -23,7 +24,7 @@ private bool findAndRemove(T)(ref T[] arr, ref T needle) {
                 arr[newIndex] = arr[newIndex + 1];
             }
 
-            arr.length = arr.length - 1;
+            arr = arr[0 .. $ - 1];
             return true;
         }
     }
@@ -74,7 +75,7 @@ public:
      *
      * Returns: true if a vertex was removed.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool removeVertex(ref Vertex vertex) {
         // Try to remove the vertex's adjacency mapping first.
         if (!adjacencyMap.remove(vertex)) {
@@ -89,7 +90,7 @@ public:
     }
 
     /// ditto
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool removeVertex(Vertex vertex) {
         return removeVertex(vertex);
     }
@@ -97,13 +98,13 @@ public:
     /**
      * Returns: true if the vertex is in the graph.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool hasVertex(ref Vertex vertex) const {
         return (vertex in adjacencyMap) !is null;
     }
 
     /// ditto
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool hasVertex(Vertex vertex) const {
         return hasVertex(vertex);
     }
@@ -149,7 +150,7 @@ public:
      *
      * Returns: true if an edge was removed.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool removeEdge(ref Vertex left, ref Vertex right) {
         auto listPtr = left in adjacencyMap;
 
@@ -169,19 +170,19 @@ public:
     }
 
     /// ditto
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool removeEdge(ref Vertex left, Vertex right) {
         return removeEdge(left, right);
     }
 
     /// ditto
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool removeEdge(Vertex left, ref Vertex right) {
         return removeEdge(left, right);
     }
 
     /// ditto
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool removeEdge(Vertex left, Vertex right) {
         return removeEdge(left, right);
     }
@@ -191,7 +192,7 @@ public:
      *
      * Returns: true if the edge exists in the graph.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool hasEdge(ref Vertex left, ref Vertex right) const {
         if (auto listPtr = left in adjacencyMap) {
             return countUntil(*listPtr, right) > -1;
@@ -201,19 +202,19 @@ public:
     }
 
     /// ditto
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool hasEdge(ref Vertex left, Vertex right) const {
         return hasEdge(left, right);
     }
 
     /// ditto
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool hasEdge(Vertex left, ref Vertex right) const {
         return hasEdge(left, right);
     }
 
     /// ditto
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     bool hasEdge(Vertex left, Vertex right) const {
         return hasEdge(left, right);
     }
@@ -224,10 +225,9 @@ public:
      *
      * Returns: The number of vertices in this graph.
      */
-    @trusted pure nothrow
+    @nogc @safe pure nothrow
     @property
     size_t vertexCount() const {
-        // BUG: .length is not @safe
         return adjacencyMap.length;
     }
 
@@ -239,17 +239,13 @@ public:
      *
      * Returns: The number of directed edges in this graph.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     size_t directedEdgeCount() const {
         size_t count = 0;
 
-        // BUG: We have to catch the exception which never happens
-        // to make this nothrow, because the foreach isn't nothrow.
-        try {
-            foreach(ref list; adjacencyMap.values()) {
-                count += list.length;
-            }
-        } catch (Exception e) {}
+        foreach(ref list; adjacencyMap.values()) {
+            count += list.length;
+        }
 
         return count;
     }
@@ -260,7 +256,7 @@ public:
      *
      * Returns: The number of edges in this graph.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     size_t edgeCount() const {
         static if (!isDirected) {
             return directedEdgeCount() / 2;
@@ -410,33 +406,33 @@ struct VertexRange(V, VArr) {
 private:
     KeyRange!(V, VArr) _keyRange;
 
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this (typeof(_keyRange) keyRange) {
         _keyRange = keyRange;
     }
 public:
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     bool empty() const {
         return _keyRange.empty;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     ref inout(V) front() inout {
         return _keyRange.front;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     void popFront() {
         _keyRange.popFront();
     }
@@ -444,21 +440,21 @@ public:
 
 /**
  * Given any type of graph, produce a range through the vertices of the graph.
- * 
+ *
  * Params:
  *     graph = A graph.
- * 
+ *
  * Returns:
  *     A ForwardRange through the vertices of the graph.
  */
-@safe pure nothrow
+@nogc @safe pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref BasicGraph!(V, edgeDirection) graph) {
     return VertexRange!(V, V[])(graph.adjacencyMap.keys);
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref const(BasicGraph!(V, edgeDirection)) graph) {
     return VertexRange!(const(V), const(V[]))(
@@ -468,7 +464,7 @@ auto vertices(V, EdgeDirection edgeDirection)
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref immutable(BasicGraph!(V, edgeDirection)) graph) {
     return VertexRange!(immutable(V), immutable(V[]))(
@@ -519,7 +515,7 @@ private:
     ItemRange!(V, VArr) _itemRange;
     size_t _outgoingIndex;
 
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this (typeof(_itemRange) itemRange) {
         _itemRange = itemRange;
 
@@ -530,20 +526,20 @@ private:
     }
 public:
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     inout(typeof(this)) save() inout {
         return this;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     bool empty() const {
         return _itemRange.empty;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property
     Edge!V front() const {
         auto item = _itemRange.front;
@@ -552,7 +548,7 @@ public:
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     void popFront() {
         if (++_outgoingIndex < _itemRange.front.value.length) {
             // There's another outgoing edge in the list, so move to that.
@@ -570,21 +566,21 @@ public:
 
 /**
  * Given any type of graph, produce a range through the edges of the graph.
- * 
+ *
  * Params:
  *     graph = A graph.
- * 
+ *
  * Returns:
  *     A ForwardRange through the edges of the graph.
  */
-@safe pure nothrow
+@nogc @safe pure nothrow
 auto edges(V, EdgeDirection edgeDirection)
 (auto ref BasicGraph!(V, edgeDirection) graph) {
     return EdgeRange!(V, V[])(graph.adjacencyMap.items);
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto edges(V, EdgeDirection edgeDirection)
 (auto ref const(BasicGraph!(V, edgeDirection)) graph) {
     return EdgeRange!(const(V), const(V[]))(
@@ -594,7 +590,7 @@ auto edges(V, EdgeDirection edgeDirection)
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 auto edges(V, EdgeDirection edgeDirection)
 (auto ref immutable(BasicGraph!(V, edgeDirection)) graph) {
     return EdgeRange!(immutable(V), immutable(V[]))(
