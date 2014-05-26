@@ -34,6 +34,9 @@ public:
         add(value);
     }
 
+    /// A HashSet is an OutputRange.
+    alias put = add;
+
     /**
      * Remove an element from this set if present.
      *
@@ -253,4 +256,18 @@ unittest {
     auto thirdSet = createSet().dup();
 
     assert(set == newSet);
+}
+
+unittest {
+    import std.range;
+    import std.algorithm;
+
+    HashSet!int set;
+
+    repeat(cast(int) 3).take(3).copy(&set);
+    repeat(cast(int) 4).take(3).copy(&set);
+
+    assert(set.length == 2);
+    assert(3 in set);
+    assert(4 in set);
 }
