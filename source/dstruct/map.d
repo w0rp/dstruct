@@ -420,6 +420,51 @@ struct HashMap(K, V) {
     size_t length() const {
         return _length;
     }
+
+    /**
+     * Test if two maps are equal.
+     *
+     * Params:
+     *     otherMap = Another map.
+     *
+     * Returns:
+     *     true only if the maps are equal in length, keys, and values.
+     */
+    @nogc @safe pure nothrow
+    bool opEquals(ref const(HashMap!(K, V)) otherMap) const {
+        if (_length != otherMap._length) {
+            return false;
+        }
+
+        foreach(const(Entry!(K, V))* entry; bucket) {
+            leftLoop: for(; entry; entry = entry.next) {
+                const(Entry!(K, V))* otherEntry = otherMap.bucket[
+                    hashIndex(entry.hash, otherMap.bucket.length)
+                ];
+
+                for(; otherEntry; otherEntry = otherEntry.next) {
+                    if (entry.hash == otherEntry.hash
+                    && entry.key == otherEntry.key
+                    && entry.value == otherEntry.value) {
+                        // We found this entry in the other map,
+                        // So search with the next entry.
+                        continue leftLoop;
+                    }
+                }
+
+                // No match found for this entry.
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// ditto
+    @nogc @safe pure nothrow
+    bool opEquals(const(HashMap!(K, V)) otherMap) const {
+        return opEquals(otherMap);
+    }
 }
 
 template HashMapKeyType(T) {
@@ -490,6 +535,35 @@ unittest {
 
     assert(map.get(1, "b") == "a");
     assert(map.get(2, "b") == "b");
+}
+
+// Test opEquals
+unittest {
+    HashMap!(string, string) leftMap;
+    HashMap!(string, string) rightMap;
+
+    // Give the left one a bit more, and take away from it.
+    leftMap["a"] = "1";
+    leftMap["b"] = "2";
+    leftMap["c"] = "3";
+    leftMap["d"] = "4";
+    leftMap["e"] = "5";
+    leftMap["f"] = "6";
+    leftMap["g"] = "7";
+
+    // Remove the extra keys
+    leftMap.remove("d");
+    leftMap.remove("e");
+    leftMap.remove("f");
+    leftMap.remove("g");
+
+    rightMap["a"] = "1";
+    rightMap["b"] = "2";
+    rightMap["c"] = "3";
+
+    // Now the two maps should have different buckets, but they
+    // should still be considered equal.
+    assert(leftMap == rightMap);
 }
 
 // Test setDefault with default init
