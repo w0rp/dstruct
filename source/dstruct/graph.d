@@ -400,45 +400,6 @@ unittest {
 }
 
 /**
- * A range through the vertices of a graph.
- */
-struct VertexRange(V, VArr) {
-private:
-    KeyRange!(V, VArr) _keyRange;
-
-    @nogc @safe pure nothrow
-    this (typeof(_keyRange) keyRange) {
-        _keyRange = keyRange;
-    }
-public:
-    ///
-    @nogc @safe pure nothrow
-    inout(typeof(this)) save() inout {
-        return this;
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    @property
-    bool empty() const {
-        return _keyRange.empty;
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    @property
-    ref inout(V) front() inout {
-        return _keyRange.front;
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    void popFront() {
-        _keyRange.popFront();
-    }
-}
-
-/**
  * Given any type of graph, produce a range through the vertices of the graph.
  *
  * Params:
@@ -450,27 +411,21 @@ public:
 @nogc @safe pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref BasicGraph!(V, edgeDirection) graph) {
-    return VertexRange!(V, V[])(graph.adjacencyMap.keys);
+    return graph.adjacencyMap.keys;
 }
 
 /// ditto
-@nogc @trusted pure nothrow
+@nogc @safe pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref const(BasicGraph!(V, edgeDirection)) graph) {
-    return VertexRange!(const(V), const(V[]))(
-        cast(KeyRange!(const(V), const(V[])))
-        graph.adjacencyMap.keys
-    );
+    return graph.adjacencyMap.keys;
 }
 
 /// ditto
-@nogc @trusted pure nothrow
+@nogc @safe pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref immutable(BasicGraph!(V, edgeDirection)) graph) {
-    return VertexRange!(immutable(V), immutable(V[]))(
-        cast(KeyRange!(immutable(V), immutable(V[])))
-        graph.adjacencyMap.keys
-    );
+    return graph.adjacencyMap.keys;
 }
 
 unittest {
