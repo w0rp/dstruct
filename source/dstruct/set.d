@@ -92,40 +92,6 @@ public:
     }
 
     /**
-     * Returns: A mutable copy of this set.
-     */
-    @safe pure nothrow
-    HashSet!T dup() const {
-        HashSet!T newSet;
-
-        foreach(value; _map.keys()) {
-            newSet.add(value);
-        }
-
-        return newSet;
-    }
-
-    /**
-     * Returns: A immutable copy of this set.
-     */
-    @safe pure nothrow
-    immutable(HashSet!T) idup() const {
-        return dup;
-    }
-
-    /**
-     * Calling .idup on an immutable set returns a reference, not
-     * a copy. This is because immutable data can be shared without
-     * any additional copying.
-     *
-     * Returns: An immutable reference to this immutable set.
-     */
-    @nogc @safe pure nothrow
-    ref immutable(HashSet!T) idup() immutable {
-        return this;
-    }
-
-    /**
      * Returns: True if two sets contain all equal values.
      */
     @nogc @safe pure nothrow
@@ -196,21 +162,6 @@ unittest {
     assert(set.length == 0);
 }
 
-// Test .idup and reference .idup
-unittest {
-    HashSet!int set;
-
-    set.add(3);
-
-    immutable(HashSet!int) copy = set.idup;
-
-    assert(copy.length == set.length);
-    assert(3 in copy);
-
-    // Check that the pointers are the same, so we know it's a reference.
-    assert(&copy == &copy.idup());
-}
-
 // Test basic equality.
 unittest {
     HashSet!int leftSet;
@@ -262,4 +213,44 @@ unittest {
 @nogc @safe pure nothrow
 auto entries(U)(auto ref inout(HashSet!U) set) {
     return set._map.keys();
+}
+
+/**
+ * Returns: A mutable copy of this set.
+ */
+@safe pure nothrow
+HashSet!T dup(T)(ref const(HashSet!T) originalSet)
+if(isDupable!T) {
+    HashSet!T newSet;
+
+    foreach(value; originalSet.entries) {
+        newSet.add(value);
+    }
+
+    return newSet;
+}
+
+/// ditto
+@safe pure nothrow
+HashSet!T dup(T)(const(HashSet!T) originalSet)
+if(isDupable!T) {
+    return originalSet.dup();
+}
+
+unittest {
+    const(HashSet!int) createSet() {
+        HashSet!int set;
+
+        set.add(1);
+        set.add(2);
+
+        return set;
+    }
+
+    auto set = createSet();
+    auto newSet = set.dup;
+    // Test r-values.
+    auto thirdSet = createSet().dup();
+
+    assert(set == newSet);
 }

@@ -26,6 +26,20 @@ private struct Entry(K, V) {
         key = _key;
         value = _value;
     }
+
+    @nogc @safe pure nothrow
+    this(size_t _hash, K _key, ref V _value) {
+        hash = _hash;
+        key = _key;
+        value = _value;
+    }
+
+    @nogc @safe pure nothrow
+    this(size_t _hash, K _key, V _value) {
+        hash = _hash;
+        key = _key;
+        value = _value;
+    }
 }
 
 @nogc @safe pure nothrow
@@ -1146,4 +1160,90 @@ unittest {
 
     assert(val1 == 3);
     assert(val2 == 0);
+}
+
+/**
+ * Copy an existing map into a new mutable map.
+ *
+ * Params:
+ *     originalMap = The map to copy from.
+ *
+ * Returns:
+ *     The fresh copy of the map.
+ */
+@safe pure nothrow
+HashMap!(K, V) dup(K, V)(ref const(HashMap!(K, V)) originalMap)
+if(isDupable!K && isDupable!V) {
+    import std.math;
+
+    HashMap!(K, V) newMap;
+
+    if (originalMap._length == 0) {
+        // 0 is a special case.
+        return newMap;
+    } else if (originalMap._length <= 4) {
+        newMap.bucket = new Entry!(K, V)*[4];
+    } else {
+        // Allocate a power of two bucket size large enough to fit this.
+        newMap.bucket = new Entry!(K, V)*[
+            cast(size_t) 2 ^^ ceil(log2(originalMap._length))
+        ];
+    }
+
+    newMap._length = originalMap._length;
+
+    foreach(const(Entry!(K, V))* entry; originalMap.bucket) {
+        leftLoop: for(; entry; entry = entry.next) {
+            size_t newIndex = hashIndex(entry.hash, newMap.bucket.length);
+            auto otherEntry = newMap.bucket[newIndex];
+
+            if (otherEntry is null) {
+                newMap.bucket[newIndex] = new Entry!(K, V)(
+                    entry.hash, entry.key, entry.value
+                );
+            } else {
+                // Skip ahead till we hit the last entry.
+                while (otherEntry.next !is null) {
+                    otherEntry = otherEntry.next;
+                }
+
+                otherEntry.next = new Entry!(K, V)(
+                    entry.hash, entry.key, entry.value
+                );
+            }
+        }
+    }
+
+    return newMap;
+}
+
+/// ditto
+@safe pure nothrow
+HashMap!(K, V) dup(K, V)(const(HashMap!(K, V)) originalMap)
+if(isDupable!K && isDupable!V) {
+    return originalMap.dup();
+}
+
+unittest {
+    const(HashMap!(int, int)) createMap() {
+        HashMap!(int, int) map;
+
+        map[3] = 4;
+        map[4] = 7;
+
+        return map;
+    }
+
+    auto map = createMap();
+    auto newMap = map.dup;
+    // Test r-values.
+    auto thirdMap = createMap().dup();
+
+    assert(map == newMap);
+}
+
+unittest {
+    HashMap!(int, void[0]) map;
+
+    auto x = map.dup;
 }
