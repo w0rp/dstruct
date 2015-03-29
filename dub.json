@@ -5,7 +5,7 @@
     "authors": ["w0rp"],
     "homepage": "https://github.com/w0rp/dstruct",
     "license": "BSD 2-clause",
-    "copyright": "Copyright © 2014, w0rp",
+    "copyright": "Copyright © 2015, w0rp",
     "dependencies": {
     }
 }
