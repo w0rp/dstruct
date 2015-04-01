@@ -435,6 +435,60 @@ struct HashMap(K, V) {
         return _length;
     }
 
+    static if(isDupable!K && isDupable!V) {
+        /**
+         * Copy an existing map into a new mutable map.
+         *
+         * Returns:
+         *     The fresh copy of the map.
+         */
+        @safe pure nothrow
+        HashMap!(K, V) dup() const {
+            import std.math;
+
+            HashMap!(K, V) newMap;
+
+            if (_length == 0) {
+                // 0 is a special case.
+                return newMap;
+            } else if (_length <= 4) {
+                newMap.bucket = new Entry!(K, V)*[4];
+            } else {
+                // Allocate a power of two bucket size large enough to fit this.
+                newMap.bucket = new Entry!(K, V)*[
+                    cast(size_t) 2 ^^ ceil(log2(_length))
+                ];
+            }
+
+            newMap._length = _length;
+
+            foreach(const(Entry!(K, V))* entry; bucket) {
+                leftLoop: for(; entry; entry = entry.next) {
+                    size_t newIndex = hashIndex(entry.hash, newMap.bucket.length);
+                    auto otherEntry = newMap.bucket[newIndex];
+
+                    if (otherEntry is null) {
+                        newMap.bucket[newIndex] = new Entry!(K, V)(
+                            entry.hash, entry.key, entry.value
+                        );
+                    } else {
+                        // Skip ahead till we hit the last entry.
+                        while (otherEntry.next !is null) {
+                            otherEntry = otherEntry.next;
+                        }
+
+                        otherEntry.next = new Entry!(K, V)(
+                            entry.hash, entry.key, entry.value
+                        );
+                    }
+                }
+            }
+
+            return newMap;
+        }
+    }
+
+
     /**
      * Test if two maps are equal.
      *
@@ -756,13 +810,13 @@ public:
  *     A range running through the keys in the map.
  */
 @nogc @safe pure nothrow
-auto keys(K, V)(auto ref HashMap!(K, V) map) {
+auto byKey(K, V)(auto ref HashMap!(K, V) map) {
     return KeyRange!(K, V)(map.bucket);
 }
 
 /// ditto
 @nogc @trusted pure nothrow
-auto keys(K, V)(auto ref const(HashMap!(K, V)) map) {
+auto byKey(K, V)(auto ref const(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
 
@@ -774,7 +828,7 @@ auto keys(K, V)(auto ref const(HashMap!(K, V)) map) {
 
 /// ditto
 @nogc @trusted pure nothrow
-auto keys(K, V)(auto ref immutable(HashMap!(K, V)) map) {
+auto byKey(K, V)(auto ref immutable(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
 
@@ -793,7 +847,7 @@ unittest {
 
     int[] keyList;
 
-    foreach(ref key; map.keys()) {
+    foreach(ref key; map.byKey()) {
         keyList ~= key;
     }
 
@@ -806,9 +860,9 @@ unittest {
     const(HashMap!(string, string)) cmap;
     immutable(HashMap!(string, string)) imap;
 
-    auto mKeys = mmap.keys();
-    auto cKeys = cmap.keys();
-    auto iKeys = imap.keys();
+    auto mKeys = mmap.byKey();
+    auto cKeys = cmap.byKey();
+    auto iKeys = imap.byKey();
 
     assert(is(typeof(mKeys.front) == string));
     assert(is(typeof(cKeys.front) == const(string)));
@@ -864,13 +918,13 @@ public:
  *     A range running through the values in the map.
  */
 @nogc @safe pure nothrow
-auto values(K, V)(auto ref HashMap!(K, V) map) {
+auto byValue(K, V)(auto ref HashMap!(K, V) map) {
     return ValueRange!(K, V)(map.bucket);
 }
 
 /// ditto
 @nogc @trusted pure nothrow
-auto values(K, V)(auto ref const(HashMap!(K, V)) map) {
+auto byValue(K, V)(auto ref const(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
 
@@ -882,7 +936,7 @@ auto values(K, V)(auto ref const(HashMap!(K, V)) map) {
 
 /// ditto
 @nogc @trusted pure nothrow
-auto values(K, V)(auto ref immutable(HashMap!(K, V)) map) {
+auto byValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
 
@@ -901,7 +955,7 @@ unittest {
 
     string[] valueList = [];
 
-    foreach(ref value; map.values()) {
+    foreach(ref value; map.byValue()) {
         valueList ~= value;
     }
 
@@ -914,9 +968,9 @@ unittest {
     const(HashMap!(string, string)) cmap;
     immutable(HashMap!(string, string)) imap;
 
-    auto mValues = mmap.values();
-    auto cValues = cmap.values();
-    auto iValues = imap.values();
+    auto mValues = mmap.byValue();
+    auto cValues = cmap.byValue();
+    auto iValues = imap.byValue();
 
     assert(is(typeof(mValues.front) == string));
     assert(is(typeof(cValues.front) == const(string)));
@@ -953,7 +1007,7 @@ public:
     /**
      * A value from the map.
      */
-    @nogc @safe pure nothrow
+    @nogc @safe pure
     @property ref inout(V) value() inout {
         return _entry.value;
     }
@@ -1007,13 +1061,13 @@ public:
  *     A range running through the items in the map.
  */
 @nogc @safe pure nothrow
-auto items(K, V)(auto ref HashMap!(K, V) map) {
+auto byKeyValue(K, V)(auto ref HashMap!(K, V) map) {
     return ItemRange!(K, V)(map.bucket);
 }
 
 /// ditto
 @nogc @trusted pure nothrow
-auto items(K, V)(auto ref const(HashMap!(K, V)) map) {
+auto byKeyValue(K, V)(auto ref const(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
 
@@ -1025,7 +1079,7 @@ auto items(K, V)(auto ref const(HashMap!(K, V)) map) {
 
 /// ditto
 @nogc @trusted pure nothrow
-auto items(K, V)(auto ref immutable(HashMap!(K, V)) map) {
+auto byKeyValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
 
@@ -1045,7 +1099,7 @@ unittest {
     int[] keyList;
     string[] valueList;
 
-    foreach(item; map.items()) {
+    foreach(item; map.byKeyValue()) {
         keyList ~= item.key;
         valueList ~= item.value;
     }
@@ -1060,9 +1114,9 @@ unittest {
     const(HashMap!(string, string)) cmap;
     immutable(HashMap!(string, string)) imap;
 
-    auto mItems = mmap.items();
-    auto cItems = cmap.items();
-    auto iItems = imap.items();
+    auto mItems = mmap.byKeyValue();
+    auto cItems = cmap.byKeyValue();
+    auto iItems = imap.byKeyValue();
 
     assert(is(typeof(mItems.front.key) == string));
     assert(is(typeof(cItems.front.key) == const(string)));
@@ -1084,9 +1138,9 @@ unittest {
         return map;
     }
 
-    auto keyRange = func().keys();
-    auto valueRange = func().values();
-    auto itemRange = func().items();
+    auto keyRange = func().byKey();
+    auto valueRange = func().byValue();
+    auto itemRange = func().byKeyValue();
 }
 
 /**
@@ -1162,68 +1216,6 @@ unittest {
     assert(val2 == 0);
 }
 
-/**
- * Copy an existing map into a new mutable map.
- *
- * Params:
- *     originalMap = The map to copy from.
- *
- * Returns:
- *     The fresh copy of the map.
- */
-@safe pure nothrow
-HashMap!(K, V) dup(K, V)(ref const(HashMap!(K, V)) originalMap)
-if(isDupable!K && isDupable!V) {
-    import std.math;
-
-    HashMap!(K, V) newMap;
-
-    if (originalMap._length == 0) {
-        // 0 is a special case.
-        return newMap;
-    } else if (originalMap._length <= 4) {
-        newMap.bucket = new Entry!(K, V)*[4];
-    } else {
-        // Allocate a power of two bucket size large enough to fit this.
-        newMap.bucket = new Entry!(K, V)*[
-            cast(size_t) 2 ^^ ceil(log2(originalMap._length))
-        ];
-    }
-
-    newMap._length = originalMap._length;
-
-    foreach(const(Entry!(K, V))* entry; originalMap.bucket) {
-        leftLoop: for(; entry; entry = entry.next) {
-            size_t newIndex = hashIndex(entry.hash, newMap.bucket.length);
-            auto otherEntry = newMap.bucket[newIndex];
-
-            if (otherEntry is null) {
-                newMap.bucket[newIndex] = new Entry!(K, V)(
-                    entry.hash, entry.key, entry.value
-                );
-            } else {
-                // Skip ahead till we hit the last entry.
-                while (otherEntry.next !is null) {
-                    otherEntry = otherEntry.next;
-                }
-
-                otherEntry.next = new Entry!(K, V)(
-                    entry.hash, entry.key, entry.value
-                );
-            }
-        }
-    }
-
-    return newMap;
-}
-
-/// ditto
-@safe pure nothrow
-HashMap!(K, V) dup(K, V)(const(HashMap!(K, V)) originalMap)
-if(isDupable!K && isDupable!V) {
-    return originalMap.dup();
-}
-
 unittest {
     const(HashMap!(int, int)) createMap() {
         HashMap!(int, int) map;
@@ -1247,3 +1239,4 @@ unittest {
 
     auto x = map.dup;
 }
+

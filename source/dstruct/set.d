@@ -105,7 +105,7 @@ public:
                 return false;
             }
 
-            foreach(value; otherSet._map.keys()) {
+            foreach(value; otherSet._map.byKey()) {
                 if (value !in this) {
                     return false;
                 }
@@ -115,6 +115,19 @@ public:
         } else {
             // Implement equality the other way by flipping things around.
             return otherSet == this;
+        }
+    }
+
+    static if(isDupable!T) {
+        /**
+         * Returns: A mutable copy of this set.
+         */
+        @safe pure nothrow
+        HashSet!T dup() const {
+            HashSet!T newSet;
+            newSet._map = _map.dup;
+
+            return newSet;
         }
     }
 }
@@ -215,29 +228,7 @@ unittest {
  */
 @nogc @safe pure nothrow
 auto entries(U)(auto ref inout(HashSet!U) set) {
-    return set._map.keys();
-}
-
-/**
- * Returns: A mutable copy of this set.
- */
-@safe pure nothrow
-HashSet!T dup(T)(ref const(HashSet!T) originalSet)
-if(isDupable!T) {
-    HashSet!T newSet;
-
-    foreach(value; originalSet.entries) {
-        newSet.add(value);
-    }
-
-    return newSet;
-}
-
-/// ditto
-@safe pure nothrow
-HashSet!T dup(T)(const(HashSet!T) originalSet)
-if(isDupable!T) {
-    return originalSet.dup();
+    return set._map.byKey();
 }
 
 unittest {
@@ -271,3 +262,4 @@ unittest {
     assert(3 in set);
     assert(4 in set);
 }
+

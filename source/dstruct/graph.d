@@ -82,7 +82,7 @@ public:
             return false;
         }
 
-        foreach(ref list; adjacencyMap.values) {
+        foreach(ref list; adjacencyMap.byValue) {
             findAndRemove(list, vertex);
         }
 
@@ -243,7 +243,7 @@ public:
     size_t directedEdgeCount() const {
         size_t count = 0;
 
-        foreach(ref list; adjacencyMap.values()) {
+        foreach(ref list; adjacencyMap.byValue()) {
             count += list.length;
         }
 
@@ -411,21 +411,21 @@ unittest {
 @nogc @safe pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref BasicGraph!(V, edgeDirection) graph) {
-    return graph.adjacencyMap.keys;
+    return graph.adjacencyMap.byKey;
 }
 
 /// ditto
 @nogc @safe pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref const(BasicGraph!(V, edgeDirection)) graph) {
-    return graph.adjacencyMap.keys;
+    return graph.adjacencyMap.byKey;
 }
 
 /// ditto
 @nogc @safe pure nothrow
 auto vertices(V, EdgeDirection edgeDirection)
 (auto ref immutable(BasicGraph!(V, edgeDirection)) graph) {
-    return graph.adjacencyMap.keys;
+    return graph.adjacencyMap.byKey;
 }
 
 unittest {
@@ -531,7 +531,7 @@ public:
 @nogc @safe pure nothrow
 auto edges(V, EdgeDirection edgeDirection)
 (auto ref BasicGraph!(V, edgeDirection) graph) {
-    return EdgeRange!(V, V[])(graph.adjacencyMap.items);
+    return EdgeRange!(V, V[])(graph.adjacencyMap.byKeyValue);
 }
 
 /// ditto
@@ -540,7 +540,7 @@ auto edges(V, EdgeDirection edgeDirection)
 (auto ref const(BasicGraph!(V, edgeDirection)) graph) {
     return EdgeRange!(const(V), const(V[]))(
         cast(ItemRange!(const(V), const(V[])))
-        graph.adjacencyMap.items
+        graph.adjacencyMap.byKeyValue
     );
 }
 
@@ -550,7 +550,7 @@ auto edges(V, EdgeDirection edgeDirection)
 (auto ref immutable(BasicGraph!(V, edgeDirection)) graph) {
     return EdgeRange!(immutable(V), immutable(V[]))(
         cast(ItemRange!(immutable(V), immutable(V[])))
-        graph.adjacencyMap.items
+        graph.adjacencyMap.byKeyValue
     );
 }
 
@@ -599,3 +599,4 @@ unittest {
     assert(is(typeof(cVertices.front) == Edge!(const(string))));
     assert(is(typeof(iVertices.front) == Edge!(immutable(string))));
 }
+
