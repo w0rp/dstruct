@@ -16,6 +16,20 @@ struct HashSet(T) {
 private:
     HashMap!(T, void[0]) _map;
 public:
+     /**
+     * Construct a set reserving a minimum of :minimumSize: space
+     * for the bucket list. The actual space allocated may be some prime
+     * number larger than the requested size, but it will be enough to fit
+     * as many items as requested without another allocation.
+     *
+     * Params:
+     * minimumSize = The minimum size for the hashmap.
+     */
+    @safe pure nothrow
+    this(size_t minimumSize) {
+        _map = typeof(_map)(minimumSize);
+    }
+
     /**
      * Add an element to this set if needed.
      *
