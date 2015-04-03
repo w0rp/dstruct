@@ -143,7 +143,7 @@ struct HashMap(K, V) {
     alias ThisType = typeof(this);
 
     private Entry!(K, V)[] bucket;
-    size_t _length;
+    private size_t _length;
 
     /**
      * Construct a hashmap reserving a minimum of :minimumSize: space
