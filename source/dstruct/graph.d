@@ -329,6 +329,8 @@ unittest {
 unittest {
     Graph!byte graph;
 
+    static assert(isUndirectedGraph!(Graph!byte, byte));
+
     byte[2][] edgeList = [[1, 2], [2, 1], [3, 4], [5, 6]];
 
     foreach(edge; edgeList) {
@@ -467,16 +469,17 @@ unittest {
  */
 struct EdgeRange(V, VArr) {
 private:
-    ItemRange!(V, VArr) _itemRange;
+    KeyValueRange!(V, VArr) _keyValueRange;
     size_t _outgoingIndex;
 
     @nogc @safe pure nothrow
-    this (typeof(_itemRange) itemRange) {
-        _itemRange = itemRange;
+    this (typeof(_keyValueRange) keyValueRange) {
+        _keyValueRange = keyValueRange;
 
         // Advance until we find an edge.
-        while (!_itemRange.empty && _itemRange.front.value.length == 0) {
-            _itemRange.popFront;
+        while (!_keyValueRange.empty
+        && _keyValueRange.front.value.length == 0) {
+            _keyValueRange.popFront;
         }
     }
 public:
@@ -490,14 +493,14 @@ public:
     @nogc @safe pure nothrow
     @property
     bool empty() const {
-        return _itemRange.empty;
+        return _keyValueRange.empty;
     }
 
     ///
     @nogc @safe pure nothrow
     @property
     Edge!V front() const {
-        auto item = _itemRange.front;
+        auto item = _keyValueRange.front;
 
         return Edge!V(item.key, item.value[_outgoingIndex]);
     }
@@ -505,7 +508,7 @@ public:
     ///
     @nogc @safe pure nothrow
     void popFront() {
-        if (++_outgoingIndex < _itemRange.front.value.length) {
+        if (++_outgoingIndex < _keyValueRange.front.value.length) {
             // There's another outgoing edge in the list, so move to that.
             return;
         }
@@ -514,8 +517,9 @@ public:
         _outgoingIndex = 0;
 
         do {
-            _itemRange.popFront;
-        } while (!_itemRange.empty && _itemRange.front.value.length == 0);
+            _keyValueRange.popFront;
+        } while (!_keyValueRange.empty
+        && _keyValueRange.front.value.length == 0);
     }
 }
 
@@ -539,7 +543,7 @@ auto edges(V, EdgeDirection edgeDirection)
 auto edges(V, EdgeDirection edgeDirection)
 (auto ref const(BasicGraph!(V, edgeDirection)) graph) {
     return EdgeRange!(const(V), const(V[]))(
-        cast(ItemRange!(const(V), const(V[])))
+        cast(KeyValueRange!(const(V), const(V[])))
         graph.adjacencyMap.byKeyValue
     );
 }
@@ -549,7 +553,7 @@ auto edges(V, EdgeDirection edgeDirection)
 auto edges(V, EdgeDirection edgeDirection)
 (auto ref immutable(BasicGraph!(V, edgeDirection)) graph) {
     return EdgeRange!(immutable(V), immutable(V[]))(
-        cast(ItemRange!(immutable(V), immutable(V[])))
+        cast(KeyValueRange!(immutable(V), immutable(V[])))
         graph.adjacencyMap.byKeyValue
     );
 }

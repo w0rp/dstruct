@@ -2,3 +2,5 @@
 /dub.selections.json
 /dub.userprefs
 /__test__library__
+/__test__default__
+/benchmark_hashmap

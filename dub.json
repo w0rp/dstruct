@@ -7,5 +7,14 @@
     "license": "BSD 2-clause",
     "copyright": "Copyright © 2015, w0rp",
     "dependencies": {
-    }
+    },
+    "configurations": [
+        {"name": "default"},
+        {
+            "name": "benchmark_hashmap",
+            "targetType": "executable",
+            "targetName": "benchmark_hashmap",
+            "mainSourceFile": "benchmarks/benchmark_hashmap.d"
+        },
+    ]
 }

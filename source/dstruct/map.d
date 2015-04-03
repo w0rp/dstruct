@@ -7,46 +7,72 @@ import std.range;
 
 import dstruct.support;
 
-private struct Entry(K, V) {
-    Entry* next;
-    size_t hash;
-    K key;
-    V value;
-
-    @nogc @safe pure nothrow
-    this(size_t _hash, ref K _key, ref V _value) {
-        hash = _hash;
-        key = _key;
-        value = _value;
-    }
-
-    @nogc @safe pure nothrow
-    this(size_t _hash, ref K _key, V _value) {
-        hash = _hash;
-        key = _key;
-        value = _value;
-    }
-
-    @nogc @safe pure nothrow
-    this(size_t _hash, K _key, ref V _value) {
-        hash = _hash;
-        key = _key;
-        value = _value;
-    }
-
-    @nogc @safe pure nothrow
-    this(size_t _hash, K _key, V _value) {
-        hash = _hash;
-        key = _key;
-        value = _value;
-    }
+private enum EntryState {
+    empty = 0,
+    occupied = 1,
+    deleted = 2,
 }
 
-@nogc @safe pure nothrow
-private size_t hashIndex(size_t hash, size_t length) in {
-    assert(length > 0);
-} body {
-    return hash & (length - 1);
+/**
+ * An item from a map.
+ *
+ * The keys and the values in the map are references into the map itself.
+ */
+struct Entry(K, V) {
+private:
+    EntryState _state = EntryState.empty;
+    size_t _hash = void;
+    K _key = void;
+    V _value = void;
+
+    @nogc @safe pure nothrow
+    this(size_t hash, ref K key, ref V value) {
+        _state = EntryState.occupied;
+        _hash = hash;
+        _key = key;
+        _value = value;
+    }
+
+    @nogc @safe pure nothrow
+    this(size_t hash, ref K key, V value) {
+        _state = EntryState.occupied;
+        _hash = hash;
+        _key = key;
+        _value = value;
+    }
+
+    @nogc @safe pure nothrow
+    this(size_t hash, K key, ref V value) {
+        _state = EntryState.occupied;
+        _hash = hash;
+        _key = key;
+        _value = value;
+    }
+
+    @nogc @safe pure nothrow
+    this(size_t hash, K key, V value) {
+        _state = EntryState.occupied;
+        _hash = hash;
+        _key = key;
+        _value = value;
+    }
+
+public:
+    /**
+     * A key from the map.
+     */
+    @nogc @safe pure nothrow
+    @property ref inout(K) key() inout {
+        return _key;
+    }
+
+    /**
+     * A value from the map.
+     */
+    @nogc @safe pure nothrow
+    @property ref inout(V) value() inout {
+        return _value;
+    }
 }
 
 static if(__VERSION__ < 2066) {
@@ -61,6 +87,37 @@ static if(__VERSION__ < 2066) {
 private size_t computeHash(K)(ref K key) {
     // Cast so we can keep our function qualifiers.
     return (cast(SafeGetHashType) &(typeid(K).getHash))(&key);
+}
+
+// Choose 7 as the first prime.
+private enum size_t minimumAllocationSize = 7;
+
+private static immutable size_t[] primeList = [
+    31UL,
+    97UL, 389UL,
+    1_543UL, 6_151UL,
+    24_593UL, 98_317UL,
+    393_241UL, 1_572_869UL,
+    6_291_469UL, 25_165_843UL,
+    100_663_319UL, 402_653_189UL,
+    1_610_612_741UL, 4_294_967_291UL,
+    // 8_589_934_513UL, 17_179_869_143UL
+];
+
+@nogc @safe pure nothrow
+private size_t newBucketSize(size_t currentLength) {
+    foreach(newLength; primeList) {
+        if (newLength > currentLength) {
+            return newLength;
+        }
+    }
+
+    assert(false, "The next hashmap size was too large!");
+}
+
+@nogc @safe pure nothrow
+private size_t probe(size_t hash, size_t j, size_t length) {
+    return (hash + j * j) % length;
 }
 
 // Check that computeHash is doing the right thing.
@@ -85,68 +142,71 @@ unittest {
 struct HashMap(K, V) {
     alias ThisType = typeof(this);
 
-    private Entry!(K, V)*[] bucket;
-    private size_t _length;
+    private Entry!(K, V)[] bucket;
+    size_t _length;
 
-    @nogc @trusted pure nothrow
-    private Entry!(K, V)* topEntry(ref K key) const {
-        return cast(typeof(return))
-            bucket[hashIndex(computeHash(key), bucket.length)];
+    /**
+     * Construct a hashmap reserving a minimum of :minimumSize: space
+     * for the bucket list. The actual space allocated may be some prime
+     * number larger than the requested size, but it will be enough to fit
+     * as many items as requested without another allocation.
+     *
+     * Params:
+     * minimumSize = The minimum size for the hashmap.
+     */
+    @safe pure nothrow
+    this(size_t minimumSize) {
+        if (minimumSize <= minimumAllocationSize) {
+            bucket = new Entry!(K, V)[](minimumAllocationSize);
+        } else {
+            bucket = new Entry!(K, V)[](newBucketSize(minimumSize));
+        }
+    }
+
+    @trusted pure nothrow
+    private void copyToBucket(ref Entry!(K, V)[] newBucket) const {
+        originalBucketLoop: foreach(ref entry; bucket) {
+            if (entry._state != EntryState.occupied) {
+                // Skip holes in the container.
+                continue;
+            }
+
+            foreach(j; 0 .. newBucket.length) {
+                size_t index = probe(entry._hash, j, newBucket.length);
+
+                if (newBucket[index]._state == EntryState.empty) {
+                    // We found an empty open slot, so use it.
+                    newBucket[index] = Entry!(K, V)(
+                        entry._hash,
+                        cast(K) entry._key,
+                        cast(V) entry._value
+                    );
+
+                    continue originalBucketLoop;
+                }
+            }
+
+            // This should never happen.
+            assert(false, "There were no empty slots in the new bucket!");
+        }
+    }
+
+    @nogc @safe pure nothrow
+    private bool thresholdPassed() {
+        // For quadratic probing to work, the bucket must always have twice
+        // the available spaces, and the size must be prime.
+        return _length * 2 >= bucket.length;
     }
 
     @safe pure nothrow
     private void resize(size_t newBucketLength) in {
         assert(newBucketLength > bucket.length);
     } body {
-        auto newBucket = new Entry!(K, V)*[newBucketLength];
+        auto newBucket = new Entry!(K, V)[](newBucketLength);
 
-        foreach(entry; bucket) {
-            while (entry !is null) {
-                auto oldNext = entry.next;
-                entry.next = null;
-
-                size_t index = hashIndex(entry.hash, newBucket.length);
-
-                if (newBucket[index] is null) {
-                    newBucket[index] = entry;
-                } else {
-                    auto newPrev = newBucket[index];
-
-                    while (newPrev.next !is null) {
-                        newPrev = newPrev.next;
-                    }
-
-                    newPrev.next = entry;
-                }
-
-                entry = oldNext;
-            }
-        }
+        copyToBucket(newBucket);
 
         bucket = newBucket;
-    }
-
-    @safe pure nothrow
-    private auto addNewEntry(size_t bucketIndex, Entry!(K, V)* newEntry) {
-        if (++_length > bucket.length) {
-            // The new length exceeds a threshold, so resize the bucket.
-            resize(bucket.length * 2);
-
-            // Compute the index again, as it has changed.
-            bucketIndex = hashIndex(newEntry.hash, bucket.length);
-        }
-
-        if (bucket[bucketIndex] is null) {
-            return bucket[bucketIndex] = newEntry;
-        } else {
-            auto entry = bucket[bucketIndex];
-
-            while (entry.next !is null) {
-                entry = entry.next;
-            }
-
-            return entry.next = newEntry;
-        }
     }
 
     /**
@@ -156,58 +216,66 @@ struct HashMap(K, V) {
      *     key = The key in the map.
      *     value = A value to set in the map.
      */
-    @safe pure nothrow
+    @trusted pure nothrow
     void opIndexAssign(V value, K key) {
         size_t hash = computeHash(key);
 
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(4);
+            resize(minimumAllocationSize);
 
-            // Add in the first value.
-            bucket[hashIndex(hash, bucket.length)] =
-                new Entry!(K, V)(hash, key, value);
+            size_t index = probe(hash, 0, bucket.length);
+
+            bucket[index] = Entry!(K, V)(hash, key, value);
+
             return;
         }
 
-        size_t bucketIndex = hashIndex(hash, bucket.length);
+        foreach(j; 0 .. bucket.length) {
+            size_t index = probe(hash, j, bucket.length);
 
-        if (auto entry = bucket[bucketIndex]) {
-            do {
-                if (entry.key == key) {
-                    // We found a key match, so update the value and return.
-                    entry.value = value;
-                    return;
+            if (bucket[index]._state != EntryState.occupied) {
+                // This slot is not occupied, so insert the entry here.
+                bucket[index] = Entry!(K, V)(hash, key, value);
+
+                ++_length;
+
+                if (thresholdPassed()) {
+                    // Resize the bucket, as it passed the threshold.
+                    resize(newBucketSize(bucket.length));
                 }
-            } while (entry.next !is null);
 
-            if (++_length <= bucket.length) {
-                // We can add on another without needing a resize.
-                entry.next = new Entry!(K, V)(hash, key, value);
+                return;
+            } else if (bucket[index]._hash == hash
+            && bucket[index]._key == key) {
+                // We have this key already, so update the value.
+                bucket[index]._value = value;
                 return;
             }
-        } else if (++_length <= bucket.length) {
-            // We can slot this in right here without needing a resize.
-            bucket[bucketIndex] = new Entry!(K, V)(hash, key, value);
-            return;
         }
 
-        // The new length exceeds a threshold, so resize the bucket.
-        resize(bucket.length * 2);
+        // This should never happen.
+        assert(false, "The bucket was completely full!");
+    }
 
-        // Compute the index again, as it has changed.
-        bucketIndex = hashIndex(hash, bucket.length);
+    @nogc @safe pure nothrow
+    inout(Entry!(K, V))* hashSearch(size_t hash, K key) inout {
+        foreach(j; 0 .. bucket.length) {
+            size_t index = probe(hash, j, bucket.length);
 
-        if (auto entry = bucket[bucketIndex]) {
-            while (entry.next !is null) {
-                entry = entry.next;
+            if (bucket[index]._state == EntryState.empty) {
+                // This this entry is empty, we can stop here.
+                return null;
+            } else if (bucket[index]._state == EntryState.occupied
+            && bucket[index]._hash == hash
+            && bucket[index]._key == key) {
+                // Return a pointer to the value.
+                return &(bucket[index]);
             }
-
-            entry.next = new Entry!(K, V)(hash, key, value);
-        } else {
-            bucket[bucketIndex] = new Entry!(K, V)(hash, key, value);
         }
+
+        return null;
     }
 
     /**
@@ -223,15 +291,12 @@ struct HashMap(K, V) {
      *     A pointer to a value, a null pointer if a value is not set.
      */
     @nogc @safe pure nothrow
-    V* opBinaryRight(string op)(K key) const if (op == "in") {
-        for (auto entry = topEntry(key); entry; entry = entry.next) {
-            if (entry.key == key) {
-                // We found it, so return a pointer to it.
-                return &(entry.value);
-            }
-        }
+    inout(V)* opBinaryRight(string op)(K key) inout if (op == "in") {
+        size_t hash = computeHash(key);
 
-        return null;
+        auto entryPtr = hashSearch(hash, key);
+
+        return entryPtr !is null ? &(entryPtr._value) : null;
     }
 
     /**
@@ -246,14 +311,12 @@ struct HashMap(K, V) {
      *     A value from the map.
      */
     @nogc @safe pure nothrow
-    ref V opIndex(K key) const {
-        for (auto entry = topEntry(key); entry; entry = entry.next) {
-            if (entry.key == key) {
-                return entry.value;
-            }
-        }
+    ref inout(V) opIndex(K key) inout {
+        auto ptr = key in this;
 
-        assert(false, "Key not found in HashMap!");
+        assert(ptr !is null, "Key not found in HashMap!");
+
+        return *ptr;
     }
 
     /**
@@ -269,13 +332,9 @@ struct HashMap(K, V) {
      */
     @safe pure
     V get(V2)(K key, lazy V2 def) const if(is(V2 : V)) {
-        for (auto entry = topEntry(key); entry; entry = entry.next) {
-            if (entry.key == key) {
-                return entry.value;
-            }
-        }
+        auto ptr = key in this;
 
-        return def;
+        return ptr !is null ? *ptr : def();
     }
 
     /**
@@ -289,14 +348,14 @@ struct HashMap(K, V) {
      *     A value from the map, or the default value.
      */
     @nogc @safe pure nothrow
-    V get(K key) const {
-        for (auto entry = topEntry(key); entry; entry = entry.next) {
-            if (entry.key == key) {
-                return entry.value;
-            }
+    inout(V) get(K key) inout {
+        auto ptr = key in this;
+
+        if (ptr is null) {
+            return V.init;
         }
 
-        return V.init;
+        return *ptr;
     }
 
     /**
@@ -323,25 +382,40 @@ struct HashMap(K, V) {
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(4);
+            resize(minimumAllocationSize);
 
-            // Add in the first value.
-            return (bucket[hashIndex(hash, bucket.length)] =
-                new Entry!(K, V)(hash, key, value)).value;
+            size_t index = probe(hash, 0, bucket.length);
+
+            return (bucket[index] = Entry!(K, V)(hash, key, value()))._value;
         }
 
-        size_t bucketIndex = hashIndex(hash, bucket.length);
+        foreach(j; 0 .. bucket.length) {
+            size_t index = probe(hash, j, bucket.length);
 
-        for (auto entry = bucket[bucketIndex]; entry; entry = entry.next) {
-            if (entry.key == key) {
-                return entry.value;
+            if (bucket[index]._state == EntryState.empty) {
+                // This entry is empty, so we can insert the value here.
+                bucket[index] = Entry!(K, V)(hash, key, value());
+
+                ++_length;
+
+                if (thresholdPassed()) {
+                    // Resize the bucket, as it passed the threshold.
+                    resize(newBucketSize(bucket.length));
+
+                    return hashSearch(hash, key)._value;
+                } else {
+                    return bucket[index]._value;
+                }
+            } if (bucket[index]._state == EntryState.occupied
+            && bucket[index]._hash == hash
+            && bucket[index]._key == key) {
+                // Return a pointer to the value.
+                return bucket[index]._value;
             }
         }
 
-        return addNewEntry(
-            bucketIndex,
-            new Entry!(K, V)(hash, key, value)
-        ).value;
+        // This should never happen.
+        assert(false, "We couldn't find or set anything!");
     }
 
     /**
@@ -366,25 +440,40 @@ struct HashMap(K, V) {
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(4);
+            resize(minimumAllocationSize);
 
-            // Add in the first value.
-            return (bucket[hashIndex(hash, bucket.length)] =
-                new Entry!(K, V)(hash, key, V.init)).value;
+            size_t index = probe(hash, 0, bucket.length);
+
+            return (bucket[index] = Entry!(K, V)(hash, key, V.init))._value;
         }
 
-        size_t bucketIndex = hashIndex(hash, bucket.length);
+        foreach(j; 0 .. bucket.length) {
+            size_t index = probe(hash, j, bucket.length);
 
-        for (auto entry = bucket[bucketIndex]; entry; entry = entry.next) {
-            if (entry.key == key) {
-                return entry.value;
+            if (bucket[index]._state == EntryState.empty) {
+                // This entry is empty, so we can insert the value here.
+                bucket[index] = Entry!(K, V)(hash, key, V.init);
+
+                ++_length;
+
+                if (thresholdPassed()) {
+                    // Resize the bucket, as it passed the threshold.
+                    resize(newBucketSize(bucket.length));
+
+                    return hashSearch(hash, key)._value;
+                } else {
+                    return bucket[index]._value;
+                }
+            } if (bucket[index]._state == EntryState.occupied
+            && bucket[index]._hash == hash
+            && bucket[index]._key == key) {
+                // Return a pointer to the value.
+                return bucket[index]._value;
             }
         }
 
-        return addNewEntry(
-            bucketIndex,
-            new Entry!(K, V)(hash, key, V.init)
-        ).value;
+        // This should never happen.
+        assert(false, "We couldn't find or set anything!");
     }
 
     /**
@@ -398,30 +487,45 @@ struct HashMap(K, V) {
      */
     @nogc @safe pure nothrow
     bool remove(K key) {
-        size_t bucketIndex = hashIndex(computeHash(key), bucket.length);
-        auto arr = bucket[bucketIndex];
+        size_t hash = computeHash(key);
 
-        Entry!(K, V)* lastEntry = null;
-        Entry!(K, V)* entry = bucket[bucketIndex];
+        foreach(j; 0 .. bucket.length) {
+            size_t index = probe(hash, j, bucket.length);
 
-        while (entry !is null) {
-            if (entry.key == key) {
-                // We found a match, so remove the entry.
-                if (lastEntry is null) {
-                    bucket[bucketIndex] = entry.next;
-                } else {
-                    lastEntry.next = entry.next;
+            with(EntryState) final switch(bucket[index]._state) {
+            case empty:
+                // This this entry is empty, we can stop here.
+                return false;
+            case deleted:
+                if (bucket[index]._hash == hash
+                && bucket[index]._key == key) {
+                    // We found the previously deleted key, so stop here.
+                    // We have to check for this so 'double removing' works.
+                    return false;
                 }
+            break;
+            case occupied:
+                if (bucket[index]._hash == hash
+                && bucket[index]._key == key) {
+                    // Reduce the length, as we are removing something.
+                    --_length;
 
-                --_length;
-                return true;
+                    // Clear the entry and mark it as deleted.
+                    // The entry is not marked empty, so we can skip over it
+                    // when searching, but yet fill it again when inserting.
+                    // We have to leave the key and hash behind so we can
+                    // search for deleted values.
+                    bucket[index]._value = V.init;
+                    bucket[index]._state = EntryState.deleted;
+
+                    return true;
+                }
+            break;
             }
-
-            lastEntry = entry;
-            entry = entry.next;
         }
 
-        return false;
+        // This should never happen.
+        assert(false, "We couldn't find an empty slot or remove something!");
     }
 
     /**
@@ -444,7 +548,7 @@ struct HashMap(K, V) {
          */
         @safe pure nothrow
         HashMap!(K, V) dup() const {
-            import std.math;
+            import std.math: ceil, log2;
 
             HashMap!(K, V) newMap;
 
@@ -452,37 +556,17 @@ struct HashMap(K, V) {
                 // 0 is a special case.
                 return newMap;
             } else if (_length <= 4) {
-                newMap.bucket = new Entry!(K, V)*[4];
+                newMap.bucket = new Entry!(K, V)[](4);
             } else {
                 // Allocate a power of two bucket size large enough to fit this.
-                newMap.bucket = new Entry!(K, V)*[
+                newMap.bucket = new Entry!(K, V)[](
                     cast(size_t) 2 ^^ ceil(log2(_length))
-                ];
+                );
             }
 
             newMap._length = _length;
 
-            foreach(const(Entry!(K, V))* entry; bucket) {
-                leftLoop: for(; entry; entry = entry.next) {
-                    size_t newIndex = hashIndex(entry.hash, newMap.bucket.length);
-                    auto otherEntry = newMap.bucket[newIndex];
-
-                    if (otherEntry is null) {
-                        newMap.bucket[newIndex] = new Entry!(K, V)(
-                            entry.hash, entry.key, entry.value
-                        );
-                    } else {
-                        // Skip ahead till we hit the last entry.
-                        while (otherEntry.next !is null) {
-                            otherEntry = otherEntry.next;
-                        }
-
-                        otherEntry.next = new Entry!(K, V)(
-                            entry.hash, entry.key, entry.value
-                        );
-                    }
-                }
-            }
+            copyToBucket(newMap.bucket);
 
             return newMap;
         }
@@ -504,25 +588,26 @@ struct HashMap(K, V) {
             return false;
         }
 
-        foreach(const(Entry!(K, V))* entry; bucket) {
-            leftLoop: for(; entry; entry = entry.next) {
-                const(Entry!(K, V))* otherEntry = otherMap.bucket[
-                    hashIndex(entry.hash, otherMap.bucket.length)
-                ];
-
-                for(; otherEntry; otherEntry = otherEntry.next) {
-                    if (entry.hash == otherEntry.hash
-                    && entry.key == otherEntry.key
-                    && entry.value == otherEntry.value) {
-                        // We found this entry in the other map,
-                        // So search with the next entry.
-                        continue leftLoop;
-                    }
-                }
-
-                // No match found for this entry.
-                return false;
+        originalBucketLoop: foreach(ref entry; bucket) {
+            if (entry._state != EntryState.occupied) {
+                // Skip holes in the container.
+                continue;
             }
+
+            foreach(j; 0 .. otherMap.bucket.length) {
+                size_t index = probe(entry._hash, j, otherMap.bucket.length);
+
+                if (otherMap.bucket[index]._state == EntryState.empty) {
+                    return false;
+                } else if (otherMap.bucket[index]._state == EntryState.occupied
+                && otherMap.bucket[index]._hash == entry._hash
+                && otherMap.bucket[index]._key == entry._key) {
+                    continue originalBucketLoop;
+                }
+            }
+
+            // This should never happen.
+            assert(false, "There were no empty slots in the other bucket!");
         }
 
         return true;
@@ -536,11 +621,11 @@ struct HashMap(K, V) {
 }
 
 template HashMapKeyType(T) {
-    alias HashMapKeyType = typeof(ElementType!(typeof(T.bucket)).key);
+    alias HashMapKeyType = typeof(ElementType!(typeof(T.bucket))._key);
 }
 
 template HashMapValueType(T) {
-    alias HashMapValueType = typeof(ElementType!(typeof(T.bucket)).value);
+    alias HashMapValueType = typeof(ElementType!(typeof(T.bucket))._value);
 }
 
 // Check setting values, retrieval, removal, and lengths.
@@ -569,6 +654,77 @@ unittest {
 
     assert(map.length == 0);
 }
+
+unittest {
+    HashMap!(int, string) map;
+
+    map[1] = "a";
+    map[2] = "b";
+    map[3] = "c";
+    map[4] = "d";
+    map[5] = "e";
+    map[6] = "f";
+    map[7] = "g";
+    map[8] = "h";
+    map[9] = "i";
+
+    map[1] = "x";
+    map[2] = "y";
+    map[3] = "z";
+
+    assert(map.length == 9);
+
+    assert(map[1] == "x");
+    assert(map[2] == "y");
+    assert(map[3] == "z");
+    assert(map[4] == "d");
+    assert(map[5] == "e");
+    assert(map[6] == "f");
+    assert(map[7] == "g");
+    assert(map[8] == "h");
+    assert(map[9] == "i");
+
+    assert(map.remove(3));
+    assert(map.remove(2));
+    assert(map.remove(1));
+
+    assert(!map.remove(1));
+
+    assert(map.length == 6);
+}
+
+// Test the map with heavy collisions.
+unittest {
+    struct BadHashObject {
+        int value;
+
+        @disable this();
+
+        this(int value) {
+            this.value = value;
+        }
+
+        @safe nothrow
+        size_t toHash() const {
+            return 0;
+        }
+
+        @nogc @safe nothrow pure
+        bool opEquals(ref const BadHashObject other) const {
+            return value == other.value;
+        }
+    }
+
+    HashMap!(BadHashObject, string) map;
+    enum size_t mapSize = 100;
+
+    foreach(num; 0 .. mapSize) {
+        map[BadHashObject(cast(int) num)] = "a";
+    }
+
+    assert(map.length == mapSize);
+}
+
 
 // Test the 'in' operator.
 unittest {
@@ -679,39 +835,28 @@ unittest {
     assert(map[2] == 4);
 }
 
-unittest {
-    int[string] map = ["foo": 3];
-
-    auto val1 = map["foo"];
-    auto val2 = map.setDefault("bar", 4);
-
-    assert(val1 == 3);
-    assert(val2 == 4);
-}
-
-private struct EntryRange(K, V) {
+/**
+ * A range through a series of items in the map.
+ */
+struct KeyValueRange(K, V) {
 private:
-    Entry!(K, V)*[] _bucket;
-    Entry!(K, V)* _entry;
+    Entry!(K, V)[] _bucket = null;
 public:
     @nogc @safe pure nothrow
-    this(Entry!(K, V)*[] bucket) {
-        _bucket = bucket;
+    this(Entry!(K, V)[] bucket) {
+        foreach(index, ref entry; bucket) {
+            if (entry._state == EntryState.occupied) {
+                // Use a slice of the bucket starting here.
+                _bucket = bucket[index .. $];
 
-        while(_bucket.length > 0) {
-            _entry = _bucket[0];
-
-            if (_entry !is null) {
                 return;
             }
-
-            _bucket = _bucket[1 .. $];
         }
     }
 
     @nogc @trusted pure nothrow
-    this(const(Entry!(K, V)*[]) bucket) {
-        this(cast(Entry!(K, V)*[]) bucket);
+    this(const(Entry!(K, V)[]) bucket) {
+        this(cast(Entry!(K, V)[]) bucket);
     }
 
     @nogc @safe pure nothrow
@@ -722,333 +867,34 @@ public:
     @nogc @safe pure nothrow
     @property
     bool empty() const {
-        return _entry is null;
+        // We can check that the bucket is empty to check if this range is
+        // empty, because we will clear it after we pop the last item.
+        return _bucket.length == 0;
     }
 
     @nogc @safe pure nothrow
     @property
-    inout(Entry!(K, V)*) front() inout in {
+    ref inout(Entry!(K, V)) front() inout in {
         assert(!empty());
     } body {
-        return _entry;
+        return _bucket[0];
     }
 
     @nogc @safe pure nothrow
     void popFront() in {
         assert(!empty());
     } body {
-        if (_entry.next !is null) {
-            // We have a another entry in the linked list, so skip to that.
-            _entry = _entry.next;
-            return;
-        }
+        foreach(index; 1 .. _bucket.length) {
+            if (_bucket[index]._state == EntryState.occupied) {
+                // Use a slice of the bucket starting here.
+                _bucket = _bucket[index .. $];
 
-        _bucket = _bucket[1 .. $];
-
-        // Keep advancing until we find the start of another linked list,
-        // or we run off the end.
-        while (_bucket.length > 0) {
-            _entry = _bucket[0];
-
-            if (_entry !is null) {
                 return;
             }
-
-            _bucket = _bucket[1 .. $];
         }
 
-        // Clear the entry if we hit the end.
-        _entry = null;
-    }
-}
-
-/**
- * This is a range which runs through a series of keys in map.
- */
-struct KeyRange(K, V) {
-private:
-    EntryRange!(K, V) _entryRange;
-public:
-    @nogc @safe pure nothrow
-    private this()(auto ref Entry!(K, V)*[] bucket) {
-        _entryRange = EntryRange!(K, V)(bucket);
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    inout(typeof(this)) save() inout {
-        return this;
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    @property
-    bool empty() const {
-        return _entryRange.empty;
-    }
-
-    ///
-    @nogc @trusted pure nothrow
-    @property
-    ref inout(K) front() inout {
-        return _entryRange.front.key;
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    void popFront() {
-        _entryRange.popFront();
-    }
-}
-
-/**
- * Produce a range through the keys of a map.
- *
- * Params:
- *     map = A map.
- * Returns:
- *     A range running through the keys in the map.
- */
-@nogc @safe pure nothrow
-auto byKey(K, V)(auto ref HashMap!(K, V) map) {
-    return KeyRange!(K, V)(map.bucket);
-}
-
-/// ditto
-@nogc @trusted pure nothrow
-auto byKey(K, V)(auto ref const(HashMap!(K, V)) map) {
-    alias RealK = HashMapKeyType!(typeof(map));
-    alias RealV = HashMapValueType!(typeof(map));
-
-    return KeyRange!(RealK, RealV)(
-        cast(Entry!(RealK, RealV)*[])
-        map.bucket
-    );
-}
-
-/// ditto
-@nogc @trusted pure nothrow
-auto byKey(K, V)(auto ref immutable(HashMap!(K, V)) map) {
-    alias RealK = HashMapKeyType!(typeof(map));
-    alias RealV = HashMapValueType!(typeof(map));
-
-    return KeyRange!(RealK, RealV)(
-        cast(Entry!(RealK, RealV)*[])
-        map.bucket
-    );
-}
-
-unittest {
-    HashMap!(int, string) map;
-
-    map[1] = "a";
-    map[2] = "b";
-    map[3] = "c";
-
-    int[] keyList;
-
-    foreach(ref key; map.byKey()) {
-        keyList ~= key;
-    }
-
-    // From the way the buckets are distributed, we know we'll get this back.
-    assert(keyList == [1, 2, 3]);
-}
-
-unittest {
-    HashMap!(string, string) mmap;
-    const(HashMap!(string, string)) cmap;
-    immutable(HashMap!(string, string)) imap;
-
-    auto mKeys = mmap.byKey();
-    auto cKeys = cmap.byKey();
-    auto iKeys = imap.byKey();
-
-    assert(is(typeof(mKeys.front) == string));
-    assert(is(typeof(cKeys.front) == const(string)));
-    assert(is(typeof(iKeys.front) == immutable(string)));
-}
-
-/**
- * This is a range which runs through a series of values in a map.
- */
-struct ValueRange(K, V) {
-private:
-    EntryRange!(K, V) _entryRange;
-public:
-    @nogc @safe pure nothrow
-    private this()(auto ref Entry!(K, V)*[] bucket) {
-        _entryRange = EntryRange!(K, V)(bucket);
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    inout(typeof(this)) save() inout {
-        return this;
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    @property
-    bool empty() const {
-        return _entryRange.empty;
-    }
-
-    ///
-    @nogc @trusted pure nothrow
-    @property
-    ref inout(V) front() inout {
-        return _entryRange.front.value;
-    }
-
-    ///
-
-    @nogc @safe pure nothrow
-    void popFront() {
-        _entryRange.popFront();
-    }
-}
-
-/**
- * Produce a range through the values of a map.
- *
- * Params:
- *     map = A map.
- * Returns:
- *     A range running through the values in the map.
- */
-@nogc @safe pure nothrow
-auto byValue(K, V)(auto ref HashMap!(K, V) map) {
-    return ValueRange!(K, V)(map.bucket);
-}
-
-/// ditto
-@nogc @trusted pure nothrow
-auto byValue(K, V)(auto ref const(HashMap!(K, V)) map) {
-    alias RealK = HashMapKeyType!(typeof(map));
-    alias RealV = HashMapValueType!(typeof(map));
-
-    return ValueRange!(RealK, RealV)(
-        cast(Entry!(RealK, RealV)*[])
-        map.bucket
-    );
-}
-
-/// ditto
-@nogc @trusted pure nothrow
-auto byValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
-    alias RealK = HashMapKeyType!(typeof(map));
-    alias RealV = HashMapValueType!(typeof(map));
-
-    return ValueRange!(RealK, RealV)(
-        cast(Entry!(RealK, RealV)*[])
-        map.bucket
-    );
-}
-
-unittest {
-    HashMap!(int, string) map;
-
-    map[1] = "a";
-    map[2] = "b";
-    map[3] = "c";
-
-    string[] valueList = [];
-
-    foreach(ref value; map.byValue()) {
-        valueList ~= value;
-    }
-
-    // From the way the buckets are distributed, we know we'll get this back.
-    assert(valueList == ["a", "b", "c"]);
-}
-
-unittest {
-    HashMap!(string, string) mmap;
-    const(HashMap!(string, string)) cmap;
-    immutable(HashMap!(string, string)) imap;
-
-    auto mValues = mmap.byValue();
-    auto cValues = cmap.byValue();
-    auto iValues = imap.byValue();
-
-    assert(is(typeof(mValues.front) == string));
-    assert(is(typeof(cValues.front) == const(string)));
-    assert(is(typeof(iValues.front) == immutable(string)));
-}
-
-/**
- * An item from a map.
- *
- * The keys and the values in the map are references into the map itself.
- */
-struct Item(K, V) {
-private:
-    Entry!(K, V)* _entry;
-
-    @nogc @safe pure nothrow
-    this(inout(Entry!(K, V)*) entry) inout in {
-        assert(entry !is null);
-    } body {
-        _entry = entry;
-    }
-public:
-    ///
-    @disable this();
-
-    /**
-     * A key from the map.
-     */
-    @nogc @safe pure nothrow
-    @property ref inout(K) key() inout {
-        return _entry.key;
-    }
-
-    /**
-     * A value from the map.
-     */
-    @nogc @safe pure
-    @property ref inout(V) value() inout {
-        return _entry.value;
-    }
-}
-
-/**
- * A range through a series of items in the map.
- */
-struct ItemRange(K, V) {
-private:
-    EntryRange!(K, V) _entryRange;
-public:
-    @nogc @safe pure nothrow
-    private this()(auto ref Entry!(K, V)*[] bucket) {
-        _entryRange = EntryRange!(K, V)(bucket);
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    inout(typeof(this)) save() inout {
-        return this;
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    @property
-    bool empty() const {
-        return _entryRange.empty;
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    @property
-    inout(Item!(K, V)) front() inout {
-        return typeof(return)(_entryRange.front);
-    }
-
-    ///
-    @nogc @safe pure nothrow
-    void popFront() {
-        _entryRange.popFront();
+        // Clear the bucket if we hit the end.
+        _bucket = null;
     }
 }
 
@@ -1062,7 +908,12 @@ public:
  */
 @nogc @safe pure nothrow
 auto byKeyValue(K, V)(auto ref HashMap!(K, V) map) {
-    return ItemRange!(K, V)(map.bucket);
+    if (map.length == 0) {
+        // Empty ranges should not have to traverse the bucket at all.
+        return KeyValueRange!(K, V).init;
+    }
+
+    return KeyValueRange!(K, V)(map.bucket);
 }
 
 /// ditto
@@ -1071,8 +922,12 @@ auto byKeyValue(K, V)(auto ref const(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
 
-    return ItemRange!(RealK, RealV)(
-        cast(Entry!(RealK, RealV)*[])
+    if (map.length == 0) {
+        return KeyValueRange!(RealK, RealV).init;
+    }
+
+    return KeyValueRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)[])
         map.bucket
     );
 }
@@ -1083,8 +938,12 @@ auto byKeyValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
     alias RealK = HashMapKeyType!(typeof(map));
     alias RealV = HashMapValueType!(typeof(map));
 
-    return ItemRange!(RealK, RealV)(
-        cast(Entry!(RealK, RealV)*[])
+    if (map.length == 0) {
+        return KeyValueRange!(RealK, RealV).init;
+    }
+
+    return KeyValueRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)[])
         map.bucket
     );
 }
@@ -1144,76 +1003,241 @@ unittest {
 }
 
 /**
- * Get or create a value from/in an associative array.
- *
- * Given an associative array to modify, a key, and a
- * lazy evaluated default value, attempt to retrieve a value from
- * an associative array. If a value for the given key is not set,
- * set the provided default value in the associative array and
- * return that.
- *
- * The value will be returned by reference.
- *
- * Params:
- *     map = The associative array to modify.
- *     key = The key in the associative array.
- *     def = A lazy default value.
- *
- * Returns:
- *     A reference to the value in the associative array.
+ * This is a range which runs through a series of keys in map.
  */
-@safe pure
-ref V1 setDefault(K, V1, V2)(ref V1[K] map, K key, lazy V2 def)
-if (is(V2 : V1)) {
-    V1* valPtr = key in map;
-
-    if (valPtr != null) {
-        return *valPtr;
+struct KeyRange(K, V) {
+private:
+    KeyValueRange!(K, V) _keyValueRange;
+public:
+    @nogc @safe pure nothrow
+    private this()(auto ref Entry!(K, V)[] bucket) {
+        _keyValueRange = KeyValueRange!(K, V)(bucket);
     }
 
-    map[key] = def();
+    ///
+    @nogc @safe pure nothrow
+    inout(typeof(this)) save() inout {
+        return this;
+    }
 
-    return map[key];
+    ///
+    @nogc @safe pure nothrow
+    @property
+    bool empty() const {
+        return _keyValueRange.empty;
+    }
+
+    ///
+    @nogc @trusted pure nothrow
+    @property
+    ref inout(K) front() inout {
+        return _keyValueRange.front.key;
+    }
+
+    ///
+    @nogc @safe pure nothrow
+    void popFront() {
+        _keyValueRange.popFront();
+    }
 }
 
 /**
- * Get or create a value from/in an associative array.
- *
- * Given an associative array to modify and a key,
- * attempt to retrieve a value from the associative array.
- * If a value for the given key is not set, set the value in
- * the associative array to the default value for the value's type.
- *
- * The value will be returned by reference.
+ * Produce a range through the keys of a map.
  *
  * Params:
- *     map = The associative array to modify.
- *     key = The key in the associative array.
- *
+ *     map = A map.
  * Returns:
- *     A reference to the value in the associative array.
+ *     A range running through the keys in the map.
  */
-@safe pure nothrow
-ref V setDefault(K, V)(ref V[K] map, K key) {
-    V* valPtr = key in map;
-
-    if (valPtr != null) {
-        return *valPtr;
+@nogc @safe pure nothrow
+auto byKey(K, V)(auto ref HashMap!(K, V) map) {
+    if (map.length == 0) {
+        return KeyRange!(K, V).init;
     }
 
-    map[key] = V.init;
+    return KeyRange!(K, V)(map.bucket);
+}
 
-    return map[key];
+/// ditto
+@nogc @trusted pure nothrow
+auto byKey(K, V)(auto ref const(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    if (map.length == 0) {
+        return KeyRange!(RealK, RealV).init;
+    }
+
+    return KeyRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)[])
+        map.bucket
+    );
+}
+
+/// ditto
+@nogc @trusted pure nothrow
+auto byKey(K, V)(auto ref immutable(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    if (map.length == 0) {
+        return KeyRange!(RealK, RealV).init;
+    }
+
+    return KeyRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)[])
+        map.bucket
+    );
 }
 
 unittest {
-    int[string] map = ["foo": 3];
+    HashMap!(int, string) map;
 
-    auto val1 = map["foo"];
-    auto val2 = map.setDefault("bar");
+    map[1] = "a";
+    map[2] = "b";
+    map[3] = "c";
 
-    assert(val1 == 3);
-    assert(val2 == 0);
+    int[] keyList;
+
+    foreach(ref key; map.byKey()) {
+        keyList ~= key;
+    }
+
+    // From the way the buckets are distributed, we know we'll get this back.
+    assert(keyList == [1, 2, 3]);
+}
+
+unittest {
+    HashMap!(string, string) mmap;
+    const(HashMap!(string, string)) cmap;
+    immutable(HashMap!(string, string)) imap;
+
+    auto mKeys = mmap.byKey();
+    auto cKeys = cmap.byKey();
+    auto iKeys = imap.byKey();
+
+    assert(is(typeof(mKeys.front) == string));
+    assert(is(typeof(cKeys.front) == const(string)));
+    assert(is(typeof(iKeys.front) == immutable(string)));
+}
+
+/**
+ * This is a range which runs through a series of values in a map.
+ */
+struct ValueRange(K, V) {
+private:
+    KeyValueRange!(K, V) _keyValueRange;
+public:
+    @nogc @safe pure nothrow
+    private this()(auto ref Entry!(K, V)[] bucket) {
+        _keyValueRange = KeyValueRange!(K, V)(bucket);
+    }
+
+    ///
+    @nogc @safe pure nothrow
+    inout(typeof(this)) save() inout {
+        return this;
+    }
+
+    ///
+    @nogc @safe pure nothrow
+    @property
+    bool empty() const {
+        return _keyValueRange.empty;
+    }
+
+    ///
+    @nogc @trusted pure nothrow
+    @property
+    ref inout(V) front() inout {
+        return _keyValueRange.front.value;
+    }
+
+    ///
+    @nogc @safe pure nothrow
+    void popFront() {
+        _keyValueRange.popFront();
+    }
+}
+
+/**
+ * Produce a range through the values of a map.
+ *
+ * Params:
+ *     map = A map.
+ * Returns:
+ *     A range running through the values in the map.
+ */
+@nogc @safe pure nothrow
+auto byValue(K, V)(auto ref HashMap!(K, V) map) {
+    if (map.length == 0) {
+        return ValueRange!(K, V).init;
+    }
+
+    return ValueRange!(K, V)(map.bucket);
+}
+
+/// ditto
+@nogc @trusted pure nothrow
+auto byValue(K, V)(auto ref const(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    if (map.length == 0) {
+        return ValueRange!(RealK, RealV).init;
+    }
+
+    return ValueRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)[])
+        map.bucket
+    );
+}
+
+/// ditto
+@nogc @trusted pure nothrow
+auto byValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
+    alias RealK = HashMapKeyType!(typeof(map));
+    alias RealV = HashMapValueType!(typeof(map));
+
+    if (map.length == 0) {
+        return ValueRange!(RealK, RealV).init;
+    }
+
+    return ValueRange!(RealK, RealV)(
+        cast(Entry!(RealK, RealV)[])
+        map.bucket
+    );
+}
+
+unittest {
+    HashMap!(int, string) map;
+
+    map[1] = "a";
+    map[2] = "b";
+    map[3] = "c";
+
+    string[] valueList = [];
+
+    foreach(ref value; map.byValue()) {
+        valueList ~= value;
+    }
+
+    // From the way the buckets are distributed, we know we'll get this back.
+    assert(valueList == ["a", "b", "c"]);
+}
+
+unittest {
+    HashMap!(string, string) mmap;
+    const(HashMap!(string, string)) cmap;
+    immutable(HashMap!(string, string)) imap;
+
+    auto mValues = mmap.byValue();
+    auto cValues = cmap.byValue();
+    auto iValues = imap.byValue();
+
+    assert(is(typeof(mValues.front) == string));
+    assert(is(typeof(cValues.front) == const(string)));
+    assert(is(typeof(iValues.front) == immutable(string)));
 }
 
 unittest {
@@ -1239,4 +1263,3 @@ unittest {
 
     auto x = map.dup;
 }
-
