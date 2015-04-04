@@ -43,6 +43,9 @@ struct BadHashObject {
 
 }
 
+size_t runsPerTest = 50;
+int testContainerSize = 10_000;
+
 void main(string[] argv) {
     import std.typetuple;
     import core.memory;
@@ -57,38 +60,45 @@ void main(string[] argv) {
         {
             auto mark = ScopedBenchmark("fill (" ~ MapType.stringof ~ ")");
 
-            MapType map;
+            foreach(i; 0 .. runsPerTest) {
+                MapType map;
 
-            foreach(num; 0 .. 10_000) {
-                map[num] = num;
+                foreach(num; 0 .. testContainerSize) {
+                    map[num] = num;
+                }
             }
         }
 
         {
             auto mark = ScopedBenchmark("fill and remove (" ~ MapType.stringof ~ ")");
 
-            MapType map;
+            foreach(i; 0 .. runsPerTest) {
+                MapType map;
 
-            foreach(num; 0 .. 10_000) {
-                map[num] = num;
+                foreach(num; 0 .. testContainerSize) {
+                    map[num] = num;
+                }
+
+                foreach(num; 0 .. testContainerSize) {
+                    map.remove(num);
+                }
             }
 
-            foreach(num; 0 .. 10_000) {
-                map.remove(num);
-            }
         }
 
         {
             auto mark = ScopedBenchmark("fill and lookup (" ~ MapType.stringof ~ ")");
 
-            MapType map;
+            foreach(i; 0 .. runsPerTest) {
+                MapType map;
 
-            foreach(num; 0 .. 10_000) {
-                map[num] = num;
-            }
+                foreach(num; 0 .. testContainerSize) {
+                    map[num] = num;
+                }
 
-            foreach(num; 0 .. 10_000) {
-                auto ptr = num in map;
+                foreach(num; 0 .. testContainerSize) {
+                    auto ptr = num in map;
+                }
             }
         }
     }
@@ -98,26 +108,30 @@ void main(string[] argv) {
     {
         auto mark = ScopedBenchmark("fill, pre-allocated");
 
-        auto map = HashMap!(int, int)(10_000);
+        foreach(i; 0 .. runsPerTest) {
+            auto map = HashMap!(int, int)(testContainerSize);
 
-        foreach(num; 0 .. 10_000) {
-            map[num] = num;
+            foreach(num; 0 .. testContainerSize) {
+                map[num] = num;
+            }
         }
     }
 
     {
         auto mark = ScopedBenchmark("fill and lookup (heavy collision)");
 
-        HashMap!(BadHashObject, int) map;
+        foreach(i; 0 .. runsPerTest) {
+            HashMap!(BadHashObject, int) map;
 
-        foreach(num; 0 .. 10_000) {
-            auto obj = BadHashObject(num);
+            foreach(num; 0 .. testContainerSize) {
+                auto obj = BadHashObject(num);
 
-            map[obj] = num;
-        }
+                map[obj] = num;
+            }
 
-        foreach(num; 0 .. 10_000) {
-            auto ptr = BadHashObject(num) in map;
+            foreach(num; 0 .. testContainerSize) {
+                auto ptr = BadHashObject(num) in map;
+            }
         }
     }
 
