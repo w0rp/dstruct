@@ -18,8 +18,8 @@ private:
 public:
      /**
      * Construct a set reserving a minimum of :minimumSize: space
-     * for the bucket list. The actual space allocated may be some prime
-     * number larger than the requested size, but it will be enough to fit
+     * for the bucket list. The actual space allocated may be some number
+     * larger than the requested size, but it will be enough to fit
      * as many items as requested without another allocation.
      *
      * Params:

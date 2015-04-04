@@ -13,6 +13,15 @@ private enum EntryState {
     deleted = 2,
 }
 
+private enum SearchFor {
+    empty = 1,
+    occupied = 2,
+    deleted = 4,
+    notDeleted = empty | occupied,
+    notOccupied = empty | deleted,
+    any = empty | occupied | deleted,
+}
+
 /**
  * An item from a map.
  *
@@ -21,9 +30,9 @@ private enum EntryState {
 struct Entry(K, V) {
 private:
     EntryState _state = EntryState.empty;
-    size_t _hash = void;
-    K _key = void;
-    V _value = void;
+    size_t _hash;
+    K _key;
+    V _value;
 
     @nogc @safe pure nothrow
     this(size_t hash, ref K key, ref V value) {
@@ -89,35 +98,9 @@ private size_t computeHash(K)(ref K key) {
     return (cast(SafeGetHashType) &(typeid(K).getHash))(&key);
 }
 
-// Choose 7 as the first prime.
-private enum size_t minimumAllocationSize = 7;
-
-private static immutable size_t[] primeList = [
-    31UL,
-    97UL, 389UL,
-    1_543UL, 6_151UL,
-    24_593UL, 98_317UL,
-    393_241UL, 1_572_869UL,
-    6_291_469UL, 25_165_843UL,
-    100_663_319UL, 402_653_189UL,
-    1_610_612_741UL, 4_294_967_291UL,
-    // 8_589_934_513UL, 17_179_869_143UL
-];
-
 @nogc @safe pure nothrow
 private size_t newBucketSize(size_t currentLength) {
-    foreach(newLength; primeList) {
-        if (newLength > currentLength) {
-            return newLength;
-        }
-    }
-
-    assert(false, "The next hashmap size was too large!");
-}
-
-@nogc @safe pure nothrow
-private size_t probe(size_t hash, size_t j, size_t length) {
-    return (hash + j * j) % length;
+    return currentLength * 2;
 }
 
 // Check that computeHash is doing the right thing.
@@ -129,6 +112,54 @@ unittest {
     assert(computeHash(x) == 1);
     assert(computeHash(y) == 2);
     assert(computeHash(z) == 3);
+}
+
+@nogc @trusted pure nothrow
+private size_t bucketSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[]) bucket, size_t hash, const(K) key) {
+    size_t index = hash & (bucket.length - 1);
+
+    foreach(j; 1 .. bucket.length) {
+        static if (searchFor == SearchFor.notOccupied) {
+            if (bucket[index]._state != EntryState.occupied) {
+                return index;
+            }
+
+            if (bucket[index]._hash == hash && bucket[index]._key == key) {
+                return index;
+            }
+        } else {
+            static if (searchFor & SearchFor.empty) {
+                if (bucket[index]._state == EntryState.empty) {
+                    return index;
+                }
+            }
+
+            static if (searchFor & SearchFor.deleted) {
+                if (bucket[index]._state == EntryState.deleted
+                && bucket[index]._hash == hash
+                && bucket[index]._key == key) {
+                    return index;
+                }
+            }
+
+            static if (searchFor & SearchFor.occupied) {
+                if (bucket[index]._state == EntryState.occupied
+                && bucket[index]._hash == hash
+                && bucket[index]._key == key) {
+                    return index;
+                }
+            }
+        }
+
+        index = (index + j) & (bucket.length - 1);
+    }
+
+    assert(false, "Slot not found!");
+}
+
+@nogc @trusted pure nothrow
+private bool thresholdPassed(size_t length, size_t bucketLength) {
+    return length * 2 >= bucketLength;
 }
 
 /**
@@ -147,8 +178,8 @@ struct HashMap(K, V) {
 
     /**
      * Construct a hashmap reserving a minimum of :minimumSize: space
-     * for the bucket list. The actual space allocated may be some prime
-     * number larger than the requested size, but it will be enough to fit
+     * for the bucket list. The actual space allocated may be some number
+     * larger than the requested size, but it will be enough to fit
      * as many items as requested without another allocation.
      *
      * Params:
@@ -156,46 +187,38 @@ struct HashMap(K, V) {
      */
     @safe pure nothrow
     this(size_t minimumSize) {
-        if (minimumSize <= minimumAllocationSize) {
-            bucket = new Entry!(K, V)[](minimumAllocationSize);
+        if (minimumSize <= 2) {
+            bucket = new Entry!(K, V)[](4);
         } else {
-            bucket = new Entry!(K, V)[](newBucketSize(minimumSize));
+            // Find the next largest power of two which will fit this size.
+            size_t size = 8;
+
+            while (thresholdPassed(minimumSize, size)) {
+                size *= 2;
+            }
+
+            bucket = new Entry!(K, V)[](newBucketSize(size));
         }
     }
 
     @trusted pure nothrow
     private void copyToBucket(ref Entry!(K, V)[] newBucket) const {
-        originalBucketLoop: foreach(ref entry; bucket) {
+        foreach(ref entry; bucket) {
             if (entry._state != EntryState.occupied) {
                 // Skip holes in the container.
                 continue;
             }
 
-            foreach(j; 0 .. newBucket.length) {
-                size_t index = probe(entry._hash, j, newBucket.length);
+            size_t index =
+                bucketSearch!(SearchFor.empty, K, V)
+                (newBucket, entry._hash, cast(K) entry._key);
 
-                if (newBucket[index]._state == EntryState.empty) {
-                    // We found an empty open slot, so use it.
-                    newBucket[index] = Entry!(K, V)(
-                        entry._hash,
-                        cast(K) entry._key,
-                        cast(V) entry._value
-                    );
-
-                    continue originalBucketLoop;
-                }
-            }
-
-            // This should never happen.
-            assert(false, "There were no empty slots in the new bucket!");
+            newBucket[index] = Entry!(K, V)(
+                entry._hash,
+                cast(K) entry._key,
+                cast(V) entry._value
+            );
         }
-    }
-
-    @nogc @safe pure nothrow
-    private bool thresholdPassed() {
-        // For quadratic probing to work, the bucket must always have twice
-        // the available spaces, and the size must be prime.
-        return _length * 2 >= bucket.length;
     }
 
     @safe pure nothrow
@@ -223,59 +246,31 @@ struct HashMap(K, V) {
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(minimumAllocationSize);
+            resize(4);
 
-            size_t index = probe(hash, 0, bucket.length);
+            size_t index = hash & (bucket.length - 1);
 
             bucket[index] = Entry!(K, V)(hash, key, value);
 
             return;
         }
 
-        foreach(j; 0 .. bucket.length) {
-            size_t index = probe(hash, j, bucket.length);
+        size_t index =
+            bucketSearch!(SearchFor.notDeleted, K, V)(bucket, hash, key);
 
-            if (bucket[index]._state != EntryState.occupied) {
-                // This slot is not occupied, so insert the entry here.
-                bucket[index] = Entry!(K, V)(hash, key, value);
+        if (bucket[index]._state != EntryState.occupied) {
+            // This slot is not occupied, so insert the entry here.
+            bucket[index] = Entry!(K, V)(hash, key, value);
+            ++_length;
 
-                ++_length;
-
-                if (thresholdPassed()) {
-                    // Resize the bucket, as it passed the threshold.
-                    resize(newBucketSize(bucket.length));
-                }
-
-                return;
-            } else if (bucket[index]._hash == hash
-            && bucket[index]._key == key) {
-                // We have this key already, so update the value.
-                bucket[index]._value = value;
-                return;
+            if (thresholdPassed(_length, bucket.length)) {
+                // Resize the bucket, as it passed the threshold.
+                resize(newBucketSize(bucket.length));
             }
+        } else {
+            // We have this key already, so update the value.
+            bucket[index]._value = value;
         }
-
-        // This should never happen.
-        assert(false, "The bucket was completely full!");
-    }
-
-    @nogc @safe pure nothrow
-    inout(Entry!(K, V))* hashSearch(size_t hash, K key) inout {
-        foreach(j; 0 .. bucket.length) {
-            size_t index = probe(hash, j, bucket.length);
-
-            if (bucket[index]._state == EntryState.empty) {
-                // This this entry is empty, we can stop here.
-                return null;
-            } else if (bucket[index]._state == EntryState.occupied
-            && bucket[index]._hash == hash
-            && bucket[index]._key == key) {
-                // Return a pointer to the value.
-                return &(bucket[index]);
-            }
-        }
-
-        return null;
     }
 
     /**
@@ -292,11 +287,15 @@ struct HashMap(K, V) {
      */
     @nogc @safe pure nothrow
     inout(V)* opBinaryRight(string op)(K key) inout if (op == "in") {
-        size_t hash = computeHash(key);
+        size_t index =
+            bucketSearch!(SearchFor.notDeleted, K, V)
+            (bucket, computeHash(key), key);
 
-        auto entryPtr = hashSearch(hash, key);
+        if (bucket[index]._state == EntryState.empty) {
+            return null;
+        }
 
-        return entryPtr !is null ? &(entryPtr._value) : null;
+        return &(bucket[index]._value);
     }
 
     /**
@@ -312,11 +311,16 @@ struct HashMap(K, V) {
      */
     @nogc @safe pure nothrow
     ref inout(V) opIndex(K key) inout {
-        auto ptr = key in this;
+        size_t index =
+            bucketSearch!(SearchFor.notDeleted, K, V)
+            (bucket, computeHash(key), key);
 
-        assert(ptr !is null, "Key not found in HashMap!");
+        assert(
+            bucket[index]._state != EntryState.empty,
+            "Key not found in HashMap!"
+        );
 
-        return *ptr;
+        return bucket[index]._value;
     }
 
     /**
@@ -332,9 +336,15 @@ struct HashMap(K, V) {
      */
     @safe pure
     V get(V2)(K key, lazy V2 def) const if(is(V2 : V)) {
-        auto ptr = key in this;
+        size_t index =
+            bucketSearch!(SearchFor.notDeleted, K, V)
+            (bucket, computeHash(key), key);
 
-        return ptr !is null ? *ptr : def();
+        if (bucket[index]._state == EntryState.empty) {
+            return def();
+        }
+
+        return bucket[index]._value;
     }
 
     /**
@@ -349,13 +359,15 @@ struct HashMap(K, V) {
      */
     @nogc @safe pure nothrow
     inout(V) get(K key) inout {
-        auto ptr = key in this;
+        size_t index =
+            bucketSearch!(SearchFor.notDeleted, K, V)
+            (bucket, computeHash(key), key);
 
-        if (ptr is null) {
+        if (bucket[index]._state == EntryState.empty) {
             return V.init;
         }
 
-        return *ptr;
+        return bucket[index]._value;
     }
 
     /**
@@ -382,40 +394,34 @@ struct HashMap(K, V) {
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(minimumAllocationSize);
+            resize(4);
 
-            size_t index = probe(hash, 0, bucket.length);
+            size_t index = hash & (bucket.length - 1);
 
             return (bucket[index] = Entry!(K, V)(hash, key, value()))._value;
         }
 
-        foreach(j; 0 .. bucket.length) {
-            size_t index = probe(hash, j, bucket.length);
+        size_t index =
+            bucketSearch!(SearchFor.notDeleted, K, V)(bucket, hash, key);
 
-            if (bucket[index]._state == EntryState.empty) {
-                // This entry is empty, so we can insert the value here.
-                bucket[index] = Entry!(K, V)(hash, key, value());
+        if (bucket[index]._state == EntryState.empty) {
+            // The entry is empty, so we can insert the value here.
+            bucket[index] = Entry!(K, V)(hash, key, value());
 
-                ++_length;
+            ++_length;
 
-                if (thresholdPassed()) {
-                    // Resize the bucket, as it passed the threshold.
-                    resize(newBucketSize(bucket.length));
+            if (thresholdPassed(_length, bucket.length)) {
+                // Resize the bucket, as it passed the threshold.
+                resize(newBucketSize(bucket.length));
 
-                    return hashSearch(hash, key)._value;
-                } else {
-                    return bucket[index]._value;
-                }
-            } if (bucket[index]._state == EntryState.occupied
-            && bucket[index]._hash == hash
-            && bucket[index]._key == key) {
-                // Return a pointer to the value.
-                return bucket[index]._value;
+                // Update the index, it has now changed.
+                index = bucketSearch!(SearchFor.notDeleted, K, V)
+                    (bucket, hash, key);
             }
         }
 
-        // This should never happen.
-        assert(false, "We couldn't find or set anything!");
+        // Return a reference to the value.
+        return bucket[index]._value;
     }
 
     /**
@@ -440,40 +446,34 @@ struct HashMap(K, V) {
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(minimumAllocationSize);
+            resize(4);
 
-            size_t index = probe(hash, 0, bucket.length);
+            size_t index = hash & (bucket.length - 1);
 
             return (bucket[index] = Entry!(K, V)(hash, key, V.init))._value;
         }
 
-        foreach(j; 0 .. bucket.length) {
-            size_t index = probe(hash, j, bucket.length);
+        size_t index =
+            bucketSearch!(SearchFor.notDeleted, K, V)(bucket, hash, key);
 
-            if (bucket[index]._state == EntryState.empty) {
-                // This entry is empty, so we can insert the value here.
-                bucket[index] = Entry!(K, V)(hash, key, V.init);
+        if (bucket[index]._state == EntryState.empty) {
+            // The entry is empty, so we can insert the value here.
+            bucket[index] = Entry!(K, V)(hash, key, V.init);
 
-                ++_length;
+            ++_length;
 
-                if (thresholdPassed()) {
-                    // Resize the bucket, as it passed the threshold.
-                    resize(newBucketSize(bucket.length));
+            if (thresholdPassed(_length, bucket.length)) {
+                // Resize the bucket, as it passed the threshold.
+                resize(newBucketSize(bucket.length));
 
-                    return hashSearch(hash, key)._value;
-                } else {
-                    return bucket[index]._value;
-                }
-            } if (bucket[index]._state == EntryState.occupied
-            && bucket[index]._hash == hash
-            && bucket[index]._key == key) {
-                // Return a pointer to the value.
-                return bucket[index]._value;
+                // Update the index, it has now changed.
+                index = bucketSearch!(SearchFor.notDeleted, K, V)
+                    (bucket, hash, key);
             }
         }
 
-        // This should never happen.
-        assert(false, "We couldn't find or set anything!");
+        // Return a reference to the value.
+        return bucket[index]._value;
     }
 
     /**
@@ -489,43 +489,27 @@ struct HashMap(K, V) {
     bool remove(K key) {
         size_t hash = computeHash(key);
 
-        foreach(j; 0 .. bucket.length) {
-            size_t index = probe(hash, j, bucket.length);
+        size_t index =
+            bucketSearch!(SearchFor.any, K, V)
+            (bucket, hash, key);
 
-            with(EntryState) final switch(bucket[index]._state) {
-            case empty:
-                // This this entry is empty, we can stop here.
-                return false;
-            case deleted:
-                if (bucket[index]._hash == hash
-                && bucket[index]._key == key) {
-                    // We found the previously deleted key, so stop here.
-                    // We have to check for this so 'double removing' works.
-                    return false;
-                }
-            break;
-            case occupied:
-                if (bucket[index]._hash == hash
-                && bucket[index]._key == key) {
-                    // Reduce the length, as we are removing something.
-                    --_length;
+        with(EntryState) final switch(bucket[index]._state) {
+        case empty:
+            return false;
+        case deleted:
+            return false;
+        case occupied:
+            --_length;
+            // Clear the entry and mark it as deleted.
+            // The entry is not marked empty, so we can skip over it
+            // when searching, but yet fill it again when inserting.
+            // We have to leave the key and hash behind so we can
+            // search for deleted values.
+            bucket[index]._value = V.init;
+            bucket[index]._state = EntryState.deleted;
 
-                    // Clear the entry and mark it as deleted.
-                    // The entry is not marked empty, so we can skip over it
-                    // when searching, but yet fill it again when inserting.
-                    // We have to leave the key and hash behind so we can
-                    // search for deleted values.
-                    bucket[index]._value = V.init;
-                    bucket[index]._state = EntryState.deleted;
-
-                    return true;
-                }
-            break;
-            }
+            return true;
         }
-
-        // This should never happen.
-        assert(false, "We couldn't find an empty slot or remove something!");
     }
 
     /**
@@ -594,20 +578,13 @@ struct HashMap(K, V) {
                 continue;
             }
 
-            foreach(j; 0 .. otherMap.bucket.length) {
-                size_t index = probe(entry._hash, j, otherMap.bucket.length);
+            size_t index =
+                bucketSearch!(SearchFor.notDeleted, K, V)
+                (otherMap.bucket, entry._hash, entry._key);
 
-                if (otherMap.bucket[index]._state == EntryState.empty) {
-                    return false;
-                } else if (otherMap.bucket[index]._state == EntryState.occupied
-                && otherMap.bucket[index]._hash == entry._hash
-                && otherMap.bucket[index]._key == entry._key) {
-                    continue originalBucketLoop;
-                }
+            if (otherMap.bucket[index]._state == EntryState.empty) {
+                return false;
             }
-
-            // This should never happen.
-            assert(false, "There were no empty slots in the other bucket!");
         }
 
         return true;
@@ -698,8 +675,6 @@ unittest {
     struct BadHashObject {
         int value;
 
-        @disable this();
-
         this(int value) {
             this.value = value;
         }
@@ -725,6 +700,12 @@ unittest {
     assert(map.length == mapSize);
 }
 
+// Test preallocated maps;
+unittest {
+    auto map = HashMap!(int, string)(3);
+
+    assert(map.bucket.length == 16);
+}
 
 // Test the 'in' operator.
 unittest {

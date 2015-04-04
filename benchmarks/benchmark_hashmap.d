@@ -1,6 +1,7 @@
 import std.datetime;
 import std.stdio;
 
+import dstruct.support;
 import dstruct.map;
 
 struct ScopedBenchmark {
@@ -25,8 +26,6 @@ public:
 
 struct BadHashObject {
     int value;
-
-    @disable this();
 
     this(int value) {
         this.value = value;
@@ -111,5 +110,7 @@ void main(string[] argv) {
             auto ptr = BadHashObject(num) in map;
         }
     }
+
+    writeln();
 }
 

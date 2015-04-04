@@ -14,8 +14,7 @@
             "name": "benchmark_hashmap",
             "targetType": "executable",
             "targetName": "benchmark_hashmap",
-            "mainSourceFile": "benchmarks/benchmark_hashmap.d",
-            "buildOptions": ["optimize", "releaseMode"]
+            "mainSourceFile": "benchmarks/benchmark_hashmap.d"
         },
     ]
 }
