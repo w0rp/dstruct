@@ -57,7 +57,7 @@ void main(string[] argv) {
         {
             auto mark = ScopedBenchmark("fill (" ~ MapType.stringof ~ ")");
 
-            HashMap!(int, int) map;
+            MapType map;
 
             foreach(num; 0 .. 10_000) {
                 map[num] = num;
@@ -67,7 +67,7 @@ void main(string[] argv) {
         {
             auto mark = ScopedBenchmark("fill and remove (" ~ MapType.stringof ~ ")");
 
-            HashMap!(int, int) map;
+            MapType map;
 
             foreach(num; 0 .. 10_000) {
                 map[num] = num;
@@ -81,7 +81,7 @@ void main(string[] argv) {
         {
             auto mark = ScopedBenchmark("fill and lookup (" ~ MapType.stringof ~ ")");
 
-            HashMap!(int, int) map;
+            MapType map;
 
             foreach(num; 0 .. 10_000) {
                 map[num] = num;
@@ -94,6 +94,16 @@ void main(string[] argv) {
     }
 
     writeln();
+
+    {
+        auto mark = ScopedBenchmark("fill, pre-allocated");
+
+        auto map = HashMap!(int, int)(10_000);
+
+        foreach(num; 0 .. 10_000) {
+            map[num] = num;
+        }
+    }
 
     {
         auto mark = ScopedBenchmark("fill and lookup (heavy collision)");
