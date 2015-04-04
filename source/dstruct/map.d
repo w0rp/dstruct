@@ -22,6 +22,15 @@ private enum SearchFor {
     any = empty | occupied | deleted,
 }
 
+private enum is64Bit = is(size_t == ulong);
+
+private enum isHashIdentical(T) =
+    is(T : uint)
+    | is(T : char)
+    | is(T : wchar)
+    | is(T : dchar)
+    | (is64Bit && is(T : ulong));
+
 /**
  * An item from a map.
  *
@@ -30,42 +39,15 @@ private enum SearchFor {
 struct Entry(K, V) {
 private:
     EntryState _state = EntryState.empty;
-    size_t _hash;
     K _key;
     V _value;
 
     @nogc @safe pure nothrow
-    this(size_t hash, ref K key, ref V value) {
+    this()(auto ref K key, auto ref V value) {
         _state = EntryState.occupied;
-        _hash = hash;
         _key = key;
         _value = value;
     }
-
-    @nogc @safe pure nothrow
-    this(size_t hash, ref K key, V value) {
-        _state = EntryState.occupied;
-        _hash = hash;
-        _key = key;
-        _value = value;
-    }
-
-    @nogc @safe pure nothrow
-    this(size_t hash, K key, ref V value) {
-        _state = EntryState.occupied;
-        _hash = hash;
-        _key = key;
-        _value = value;
-    }
-
-    @nogc @safe pure nothrow
-    this(size_t hash, K key, V value) {
-        _state = EntryState.occupied;
-        _hash = hash;
-        _key = key;
-        _value = value;
-    }
-
 public:
     /**
      * A key from the map.
@@ -84,6 +66,8 @@ public:
     }
 }
 
+// TODO: Test different entry sizes.
+
 static if(__VERSION__ < 2066) {
     private alias SafeGetHashType = size_t delegate(const(void*)) pure nothrow;
 } else {
@@ -94,13 +78,12 @@ static if(__VERSION__ < 2066) {
 
 @nogc @trusted pure nothrow
 private size_t computeHash(K)(ref K key) {
-    // Cast so we can keep our function qualifiers.
-    return (cast(SafeGetHashType) &(typeid(K).getHash))(&key);
-}
-
-@nogc @safe pure nothrow
-private size_t newBucketSize(size_t currentLength) {
-    return currentLength * 2;
+    static if (isHashIdentical!K) {
+        return cast(size_t) key;
+    } else {
+        // Cast so we can keep our function qualifiers.
+        return (cast(SafeGetHashType) &(typeid(K).getHash))(&key);
+    }
 }
 
 // Check that computeHash is doing the right thing.
@@ -114,9 +97,14 @@ unittest {
     assert(computeHash(z) == 3);
 }
 
-@nogc @trusted pure nothrow
-private size_t bucketSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[]) bucket, size_t hash, const(K) key) {
-    size_t index = hash & (bucket.length - 1);
+@nogc @safe pure nothrow
+private size_t newBucketSize(size_t currentLength) {
+    return currentLength * 2;
+}
+
+@nogc @safe pure nothrow
+private size_t bucketSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[]) bucket, const(K) key) {
+    size_t index = computeHash(key) & (bucket.length - 1);
 
     foreach(j; 1 .. bucket.length) {
         static if (searchFor == SearchFor.notOccupied) {
@@ -124,7 +112,7 @@ private size_t bucketSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[])
                 return index;
             }
 
-            if (bucket[index]._hash == hash && bucket[index]._key == key) {
+            if (bucket[index]._key == key) {
                 return index;
             }
         } else {
@@ -136,7 +124,6 @@ private size_t bucketSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[])
 
             static if (searchFor & SearchFor.deleted) {
                 if (bucket[index]._state == EntryState.deleted
-                && bucket[index]._hash == hash
                 && bucket[index]._key == key) {
                     return index;
                 }
@@ -144,7 +131,6 @@ private size_t bucketSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[])
 
             static if (searchFor & SearchFor.occupied) {
                 if (bucket[index]._state == EntryState.occupied
-                && bucket[index]._hash == hash
                 && bucket[index]._key == key) {
                     return index;
                 }
@@ -187,6 +173,11 @@ struct HashMap(K, V) {
      */
     @safe pure nothrow
     this(size_t minimumSize) {
+        if (minimumSize == 0) {
+            // 0 is a special case.
+            return;
+        }
+
         if (minimumSize <= 2) {
             bucket = new Entry!(K, V)[](4);
         } else {
@@ -211,10 +202,9 @@ struct HashMap(K, V) {
 
             size_t index =
                 bucketSearch!(SearchFor.empty, K, V)
-                (newBucket, entry._hash, cast(K) entry._key);
+                (newBucket, cast(K) entry._key);
 
             newBucket[index] = Entry!(K, V)(
-                entry._hash,
                 cast(K) entry._key,
                 cast(V) entry._value
             );
@@ -241,26 +231,23 @@ struct HashMap(K, V) {
      */
     @trusted pure nothrow
     void opIndexAssign(V value, K key) {
-        size_t hash = computeHash(key);
-
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(4);
 
-            size_t index = hash & (bucket.length - 1);
+            size_t index = computeHash(key) & (bucket.length - 1);
 
-            bucket[index] = Entry!(K, V)(hash, key, value);
+            bucket[index] = Entry!(K, V)(key, value);
 
             return;
         }
 
-        size_t index =
-            bucketSearch!(SearchFor.notDeleted, K, V)(bucket, hash, key);
+        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
 
         if (bucket[index]._state != EntryState.occupied) {
             // This slot is not occupied, so insert the entry here.
-            bucket[index] = Entry!(K, V)(hash, key, value);
+            bucket[index] = Entry!(K, V)(key, value);
             ++_length;
 
             if (thresholdPassed(_length, bucket.length)) {
@@ -287,9 +274,7 @@ struct HashMap(K, V) {
      */
     @nogc @safe pure nothrow
     inout(V)* opBinaryRight(string op)(K key) inout if (op == "in") {
-        size_t index =
-            bucketSearch!(SearchFor.notDeleted, K, V)
-            (bucket, computeHash(key), key);
+        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
 
         if (bucket[index]._state == EntryState.empty) {
             return null;
@@ -311,9 +296,7 @@ struct HashMap(K, V) {
      */
     @nogc @safe pure nothrow
     ref inout(V) opIndex(K key) inout {
-        size_t index =
-            bucketSearch!(SearchFor.notDeleted, K, V)
-            (bucket, computeHash(key), key);
+        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
 
         assert(
             bucket[index]._state != EntryState.empty,
@@ -336,9 +319,7 @@ struct HashMap(K, V) {
      */
     @safe pure
     V get(V2)(K key, lazy V2 def) const if(is(V2 : V)) {
-        size_t index =
-            bucketSearch!(SearchFor.notDeleted, K, V)
-            (bucket, computeHash(key), key);
+        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
 
         if (bucket[index]._state == EntryState.empty) {
             return def();
@@ -359,9 +340,7 @@ struct HashMap(K, V) {
      */
     @nogc @safe pure nothrow
     inout(V) get(K key) inout {
-        size_t index =
-            bucketSearch!(SearchFor.notDeleted, K, V)
-            (bucket, computeHash(key), key);
+        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
 
         if (bucket[index]._state == EntryState.empty) {
             return V.init;
@@ -389,24 +368,21 @@ struct HashMap(K, V) {
      */
     @trusted pure
     ref V setDefault(V2)(K key, lazy V2 value) if (is(V2 : V)) {
-        size_t hash = computeHash(key);
-
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(4);
 
-            size_t index = hash & (bucket.length - 1);
+            size_t index = computeHash(key) & (bucket.length - 1);
 
             return (bucket[index] = Entry!(K, V)(hash, key, value()))._value;
         }
 
-        size_t index =
-            bucketSearch!(SearchFor.notDeleted, K, V)(bucket, hash, key);
+        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
 
         if (bucket[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            bucket[index] = Entry!(K, V)(hash, key, value());
+            bucket[index] = Entry!(K, V)(hash, value());
 
             ++_length;
 
@@ -415,8 +391,7 @@ struct HashMap(K, V) {
                 resize(newBucketSize(bucket.length));
 
                 // Update the index, it has now changed.
-                index = bucketSearch!(SearchFor.notDeleted, K, V)
-                    (bucket, hash, key);
+                index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
             }
         }
 
@@ -441,24 +416,21 @@ struct HashMap(K, V) {
      */
     @trusted pure nothrow
     ref V setDefault(K key) {
-        size_t hash = computeHash(key);
-
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(4);
 
-            size_t index = hash & (bucket.length - 1);
+            size_t index = computeHash(key) & (bucket.length - 1);
 
-            return (bucket[index] = Entry!(K, V)(hash, key, V.init))._value;
+            return (bucket[index] = Entry!(K, V)(key, V.init))._value;
         }
 
-        size_t index =
-            bucketSearch!(SearchFor.notDeleted, K, V)(bucket, hash, key);
+        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
 
         if (bucket[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            bucket[index] = Entry!(K, V)(hash, key, V.init);
+            bucket[index] = Entry!(K, V)(key, V.init);
 
             ++_length;
 
@@ -467,8 +439,7 @@ struct HashMap(K, V) {
                 resize(newBucketSize(bucket.length));
 
                 // Update the index, it has now changed.
-                index = bucketSearch!(SearchFor.notDeleted, K, V)
-                    (bucket, hash, key);
+                index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
             }
         }
 
@@ -487,29 +458,21 @@ struct HashMap(K, V) {
      */
     @nogc @safe pure nothrow
     bool remove(K key) {
-        size_t hash = computeHash(key);
+        size_t index = bucketSearch!(SearchFor.any, K, V)(bucket, key);
 
-        size_t index =
-            bucketSearch!(SearchFor.any, K, V)
-            (bucket, hash, key);
-
-        with(EntryState) final switch(bucket[index]._state) {
-        case empty:
-            return false;
-        case deleted:
-            return false;
-        case occupied:
+        if (bucket[index]._state == EntryState.occupied) {
             --_length;
-            // Clear the entry and mark it as deleted.
-            // The entry is not marked empty, so we can skip over it
-            // when searching, but yet fill it again when inserting.
-            // We have to leave the key and hash behind so we can
-            // search for deleted values.
+
+            // Clear the value and mark the slot as 'deleted', which is
+            // treated often the same as 'empty', only we can skip over
+            // deleted values to search for more values.
             bucket[index]._value = V.init;
             bucket[index]._state = EntryState.deleted;
 
             return true;
         }
+
+        return false;
     }
 
     /**
@@ -532,22 +495,13 @@ struct HashMap(K, V) {
          */
         @safe pure nothrow
         HashMap!(K, V) dup() const {
-            import std.math: ceil, log2;
-
-            HashMap!(K, V) newMap;
-
             if (_length == 0) {
-                // 0 is a special case.
-                return newMap;
-            } else if (_length <= 4) {
-                newMap.bucket = new Entry!(K, V)[](4);
-            } else {
-                // Allocate a power of two bucket size large enough to fit this.
-                newMap.bucket = new Entry!(K, V)[](
-                    cast(size_t) 2 ^^ ceil(log2(_length))
-                );
+                // Just return nothing special for length 0.
+                return HashMap!(K, V).init;
             }
 
+            // Create a new map large enough to fit all of our values.
+            auto newMap = HashMap!(K, V)(_length);
             newMap._length = _length;
 
             copyToBucket(newMap.bucket);
@@ -580,7 +534,7 @@ struct HashMap(K, V) {
 
             size_t index =
                 bucketSearch!(SearchFor.notDeleted, K, V)
-                (otherMap.bucket, entry._hash, entry._key);
+                (otherMap.bucket, entry._key);
 
             if (otherMap.bucket[index]._state == EntryState.empty) {
                 return false;
@@ -1244,3 +1198,4 @@ unittest {
 
     auto x = map.dup;
 }
+
