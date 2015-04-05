@@ -7,13 +7,13 @@ import std.range;
 
 import dstruct.support;
 
-private enum EntryState {
+private enum EntryState: ubyte {
     empty = 0,
     occupied = 1,
     deleted = 2,
 }
 
-private enum SearchFor {
+private enum SearchFor: ubyte {
     empty = 1,
     occupied = 2,
     deleted = 4,
@@ -38,9 +38,17 @@ private enum isHashIdentical(T) =
  */
 struct Entry(K, V) {
 private:
-    EntryState _state = EntryState.empty;
-    K _key;
-    V _value;
+    static if(is64Bit) {
+        align(8):
+        K _key;
+        V _value;
+        EntryState _state = EntryState.empty;
+    } else {
+        align(4):
+        K _key;
+        V _value;
+        EntryState _state = EntryState.empty;
+    }
 
     @nogc @safe pure nothrow
     this()(auto ref K key, auto ref V value) {
@@ -96,6 +104,8 @@ unittest {
     assert(computeHash(y) == 2);
     assert(computeHash(z) == 3);
 }
+
+private enum size_t minimumBucketSize = 8;
 
 @nogc @safe pure nothrow
 private size_t newBucketSize(size_t currentLength) {
@@ -178,8 +188,8 @@ struct HashMap(K, V) {
             return;
         }
 
-        if (minimumSize <= 2) {
-            bucket = new Entry!(K, V)[](4);
+        if (minimumSize <= minimumBucketSize / 2) {
+            bucket = new Entry!(K, V)[](minimumBucketSize);
         } else {
             // Find the next largest power of two which will fit this size.
             size_t size = 8;
@@ -234,7 +244,7 @@ struct HashMap(K, V) {
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(4);
+            resize(minimumBucketSize);
 
             size_t index = computeHash(key) & (bucket.length - 1);
 
@@ -371,7 +381,7 @@ struct HashMap(K, V) {
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(4);
+            resize(minimumBucketSize);
 
             size_t index = computeHash(key) & (bucket.length - 1);
 
@@ -419,7 +429,7 @@ struct HashMap(K, V) {
         if (bucket.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(4);
+            resize(minimumBucketSize);
 
             size_t index = computeHash(key) & (bucket.length - 1);
 
@@ -1198,4 +1208,3 @@ unittest {
 
     auto x = map.dup;
 }
-
