@@ -46,6 +46,19 @@ struct BadHashObject {
 size_t runsPerTest = 50;
 int testContainerSize = 10_000;
 
+enum MapImpl {
+    std,
+    dstruct
+}
+
+template MapType(MapImpl impl, K, V) {
+    static if (impl == MapImpl.std) {
+        alias MapType = V[K];
+    } else {
+        alias MapType = HashMap!(K, V);
+    }
+}
+
 void main(string[] argv) {
     import std.typetuple;
     import core.memory;
@@ -54,14 +67,15 @@ void main(string[] argv) {
     // This could throw the benchmarks off.
     GC.disable();
 
-    foreach(MapType; TypeTuple!(int[int], HashMap!(int, int))) {
+    foreach(impl; TypeTuple!(MapImpl.std, MapImpl.dstruct)) {
         writeln();
 
         {
-            auto mark = ScopedBenchmark("fill (" ~ MapType.stringof ~ ")");
+            alias T = MapType!(impl, int, int);
+            auto mark = ScopedBenchmark("fill (" ~ T.stringof ~ ")");
 
             foreach(i; 0 .. runsPerTest) {
-                MapType map;
+                T map;
 
                 foreach(num; 0 .. testContainerSize) {
                     map[num] = num;
@@ -70,10 +84,11 @@ void main(string[] argv) {
         }
 
         {
-            auto mark = ScopedBenchmark("fill and remove (" ~ MapType.stringof ~ ")");
+            alias T = MapType!(impl, int, int);
+            auto mark = ScopedBenchmark("fill and remove (" ~ T.stringof ~ ")");
 
             foreach(i; 0 .. runsPerTest) {
-                MapType map;
+                T map;
 
                 foreach(num; 0 .. testContainerSize) {
                     map[num] = num;
@@ -87,10 +102,11 @@ void main(string[] argv) {
         }
 
         {
-            auto mark = ScopedBenchmark("fill and lookup (" ~ MapType.stringof ~ ")");
+            alias T = MapType!(impl, int, int);
+            auto mark = ScopedBenchmark("fill and lookup (" ~ T.stringof ~ ")");
 
             foreach(i; 0 .. runsPerTest) {
-                MapType map;
+                T map;
 
                 foreach(num; 0 .. testContainerSize) {
                     map[num] = num;
@@ -101,16 +117,13 @@ void main(string[] argv) {
                 }
             }
         }
-    }
-
-    foreach(MapType; TypeTuple!(string[string], HashMap!(string, string))) {
-        writeln();
 
         {
-            auto mark = ScopedBenchmark("fill (small) (" ~ MapType.stringof ~ ")");
+            alias T = MapType!(impl, string, string);
+            auto mark = ScopedBenchmark("fill (small) (" ~ T.stringof ~ ")");
 
             foreach(i; 0 .. runsPerTest) {
-                MapType map;
+                T map;
 
                 map["abcdefghijkl"] = "abc";
                 map["wgenwegwgewg"] = "abc";
@@ -152,10 +165,11 @@ void main(string[] argv) {
         }
 
         {
-            auto mark = ScopedBenchmark("fill (small) and remove (" ~ MapType.stringof ~ ")");
+            alias T = MapType!(impl, string, string);
+            auto mark = ScopedBenchmark("fill (small) and remove (" ~ T.stringof ~ ")");
 
             foreach(i; 0 .. runsPerTest) {
-                MapType map;
+                T map;
 
                 map["abcdefghijkl"] = "abc";
                 map["wgenwegwgewg"] = "abc";
@@ -228,6 +242,25 @@ void main(string[] argv) {
                 map.remove("464364363363");
             }
         }
+
+        {
+            alias T = MapType!(impl, BadHashObject, int);
+            auto mark = ScopedBenchmark("fill and lookup (heavy collision) (" ~ T.stringof ~ ")");
+
+            foreach(i; 0 .. runsPerTest) {
+                T map;
+
+                foreach(num; 0 .. testContainerSize) {
+                    auto obj = BadHashObject(num);
+
+                    map[obj] = num;
+                }
+
+                foreach(num; 0 .. testContainerSize) {
+                    auto ptr = BadHashObject(num) in map;
+                }
+            }
+        }
     }
 
     writeln();
@@ -240,24 +273,6 @@ void main(string[] argv) {
 
             foreach(num; 0 .. testContainerSize) {
                 map[num] = num;
-            }
-        }
-    }
-
-    {
-        auto mark = ScopedBenchmark("fill and lookup (heavy collision)");
-
-        foreach(i; 0 .. runsPerTest) {
-            HashMap!(BadHashObject, int) map;
-
-            foreach(num; 0 .. testContainerSize) {
-                auto obj = BadHashObject(num);
-
-                map[obj] = num;
-            }
-
-            foreach(num; 0 .. testContainerSize) {
-                auto ptr = BadHashObject(num) in map;
             }
         }
     }
