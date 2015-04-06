@@ -200,6 +200,20 @@ public:
         return Some!T(cast(T) _value);
     }
 
+    static if(is(T == class)) {
+        /**
+         * Given some type U, perform a dynamic cast on the class reference
+         * held within this optional value, and return a new optional value
+         * which may be null if the cast fails.
+         *
+         * Returns: A casted optional value.
+         */
+        @nogc pure nothrow
+        inout(Option!U) dynamicCast(U)() inout {
+            return Option!U(cast(U) _value);
+        }
+    }
+
     /**
      * Return some value from this reference, or a default value
      * by calling a callable argument. (function pointer, delegate, etc.)
@@ -354,6 +368,24 @@ unittest {
     assert(is(typeof(someM) == Some!Klass));
     assert(is(typeof(someC) == const(Some!Klass)));
     assert(is(typeof(someI) == immutable(Some!Klass)));
+}
+
+// Test dynamicCast across constness.
+unittest {
+    class Klass {}
+    class SubKlass {}
+
+    Option!Klass m = new Klass();
+    const Option!Klass c = new const Klass();
+    immutable Option!Klass i = new immutable Klass();
+
+    auto subM = m.dynamicCast!SubKlass;
+    auto subC = c.dynamicCast!SubKlass;
+    auto subI = i.dynamicCast!SubKlass;
+
+    assert(is(typeof(subM) == Option!SubKlass));
+    assert(is(typeof(subC) == const(Option!SubKlass)));
+    assert(is(typeof(subI) == immutable(Option!SubKlass)));
 }
 
 // Test .or, with the nice type qualifiers.
@@ -683,4 +715,73 @@ unittest {
     auto barSum = squareSum(bar.range);
 
     assert(barSum == 0);
+}
+
+unittest {
+    class Klass {}
+    class SubKlass : Klass {}
+    class SubSubKlass : SubKlass {}
+
+    Some!Klass nonNullValue = some(new Klass());
+
+    Option!Klass optionalValue;
+
+    // You can check if the value is null.
+    assert(optionalValue.isNull);
+
+    // You can assign Some!T values to it.
+    optionalValue = nonNullValue;
+
+    assert(!optionalValue.isNull);
+
+    // You can assign regular values, including derived types.
+    // Dervied Some!T values will work too.
+    optionalValue = new SubKlass();
+
+    assert(!optionalValue.isNull);
+
+    // You can get the value out as a type Some!T from it and cast it
+    // to the class type. The dynamic cast will be used.
+    assert(cast(SubKlass) optionalValue.get() !is null);
+
+    // Using the right dynamic cast means that the value from that can be null,
+    // when the dynamic cast fails.
+    assert(cast(SubSubKlass) optionalValue.get() is null);
+
+    // Or create a new optional value with a cast, which will also work
+    // when the optional value is null.
+    //
+    // This method will not exist for optional pointers.
+    Option!SubSubKlass subValue = optionalValue.dynamicCast!SubSubKlass;
+
+    assert(subValue.isNull);
+
+    // We can assign back to a regular class reference.
+    Klass regularReference;
+
+    // When the optional value is null, the range will by empty.
+    optionalValue = null;
+
+    foreach(value; optionalValue.range) {
+        regularReference = value;
+    }
+
+    assert(regularReference is null);
+
+    // We there's a value, the range will have length 1.
+    optionalValue = new Klass();
+
+    foreach(value; optionalValue.range) {
+        regularReference = value;
+    }
+
+    assert(regularReference !is null);
+
+    optionalValue = null;
+
+    // Finally, we can use a method to use a default value.
+    // If the default is null, an assertion error will be thrown
+    // in debug mode. Any callable will work with .or, and the callable
+    // can also return a Some!T type.
+    Some!Klass someOtherValue = optionalValue.or(() => new SubKlass());
 }
