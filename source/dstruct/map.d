@@ -385,14 +385,14 @@ struct HashMap(K, V) {
 
             size_t index = computeHash(key) & (bucket.length - 1);
 
-            return (bucket[index] = Entry!(K, V)(hash, key, value()))._value;
+            return (bucket[index] = Entry!(K, V)(key, value()))._value;
         }
 
         size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
 
         if (bucket[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            bucket[index] = Entry!(K, V)(hash, value());
+            bucket[index] = Entry!(K, V)(key, value());
 
             ++_length;
 
@@ -668,7 +668,7 @@ unittest {
 unittest {
     auto map = HashMap!(int, string)(3);
 
-    assert(map.bucket.length == 16);
+    assert(map.bucket.length == minimumBucketSize);
 }
 
 // Test the 'in' operator.
@@ -1208,3 +1208,4 @@ unittest {
 
     auto x = map.dup;
 }
+
