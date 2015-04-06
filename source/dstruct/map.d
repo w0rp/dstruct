@@ -3,6 +3,8 @@ module dstruct.map;
 import core.memory;
 import core.exception;
 
+import std.c.string: memcpy, memset;
+
 import std.range;
 
 import dstruct.support;
@@ -23,6 +25,18 @@ private enum SearchFor: ubyte {
 }
 
 private enum is64Bit = is(size_t == ulong);
+
+// Given a size, compute the space in bytes required for a member when
+// the member is aligned to a size_t.sizeof boundary.
+private size_t alignedSize(size_t size) {
+    if (size % size_t.sizeof) {
+        // If there's a remainder, then our boundary is a little ahead.
+        return cast(size_t) (size / size_t.sizeof) + 1 * size_t.sizeof;
+    }
+
+    // If the size is cleanly divisible, it will fit right into place.
+    return size;
+}
 
 private enum isHashIdentical(T) =
     is(T : uint)
@@ -48,13 +62,6 @@ private:
         K _key;
         V _value;
         EntryState _state = EntryState.empty;
-    }
-
-    @nogc @safe pure nothrow
-    this()(auto ref K key, auto ref V value) {
-        _state = EntryState.occupied;
-        _key = key;
-        _value = value;
     }
 public:
     /**
@@ -105,57 +112,85 @@ unittest {
     assert(computeHash(z) == 3);
 }
 
-private enum size_t minimumBucketSize = 8;
+private enum size_t minimumBucketListSize = 8;
 
 @nogc @safe pure nothrow
-private size_t newBucketSize(size_t currentLength) {
+private size_t newBucketListSize(size_t currentLength) {
     return currentLength * 2;
 }
 
-@nogc @safe pure nothrow
-private size_t bucketSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[]) bucket, const(K) key) {
-    size_t index = computeHash(key) & (bucket.length - 1);
+private size_t bucketListSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[]) bucketList, const(K) key) {
+    size_t index = computeHash(key) & (bucketList.length - 1);
 
-    foreach(j; 1 .. bucket.length) {
+    foreach(j; 1 .. bucketList.length) {
         static if (searchFor == SearchFor.notOccupied) {
-            if (bucket[index]._state != EntryState.occupied) {
+            if (bucketList[index]._state != EntryState.occupied) {
                 return index;
             }
 
-            if (bucket[index]._key == key) {
+            if (bucketList[index]._key == key) {
                 return index;
             }
         } else {
             static if (searchFor & SearchFor.empty) {
-                if (bucket[index]._state == EntryState.empty) {
+                if (bucketList[index]._state == EntryState.empty) {
                     return index;
                 }
             }
 
             static if (searchFor & SearchFor.deleted) {
-                if (bucket[index]._state == EntryState.deleted
-                && bucket[index]._key == key) {
+                if (bucketList[index]._state == EntryState.deleted
+                && bucketList[index]._key == key) {
                     return index;
                 }
             }
 
             static if (searchFor & SearchFor.occupied) {
-                if (bucket[index]._state == EntryState.occupied
-                && bucket[index]._key == key) {
+                if (bucketList[index]._state == EntryState.occupied
+                && bucketList[index]._key == key) {
                     return index;
                 }
             }
         }
 
-        index = (index + j) & (bucket.length - 1);
+        index = (index + j) & (bucketList.length - 1);
     }
 
     assert(false, "Slot not found!");
 }
 
+// Add an entry into the bucket list.
+// memcpy is used here because some types have immutable members which cannot
+// be changed, so we have to force them into the array this way.
+@trusted
+private void setEntry(K, V)(ref Entry!(K, V)[] bucketList, size_t index, auto ref K key, auto ref V value) {
+    enum valueOffset = alignedSize(K.sizeof);
+
+    // Copy the key and value into the entry.
+    memcpy(cast(void*) &bucketList[index], &key, K.sizeof);
+    memcpy(cast(void*) &bucketList[index] + valueOffset, &value, V.sizeof);
+
+    bucketList[index]._state = EntryState.occupied;
+}
+
+// Update just the value for an entry.
+@trusted
+private void updateEntryValue(K, V)(ref Entry!(K, V)[] bucketList, size_t index, auto ref V value) {
+    enum valueOffset = alignedSize(K.sizeof);
+
+    memcpy(cast(void*) &bucketList[index] + valueOffset, &value, V.sizeof);
+}
+
+@trusted
+private void zeroEntryValue(K, V)(ref Entry!(K, V)[] bucketList, size_t index) {
+    enum valueOffset = alignedSize(K.sizeof);
+
+    memset(cast(void*) &bucketList[index] + valueOffset, 0, V.sizeof);
+}
+
 @nogc @trusted pure nothrow
-private bool thresholdPassed(size_t length, size_t bucketLength) {
-    return length * 2 >= bucketLength;
+private bool thresholdPassed(size_t length, size_t bucketCount) {
+    return length * 2 >= bucketCount;
 }
 
 /**
@@ -169,7 +204,7 @@ private bool thresholdPassed(size_t length, size_t bucketLength) {
 struct HashMap(K, V) {
     alias ThisType = typeof(this);
 
-    private Entry!(K, V)[] bucket;
+    private Entry!(K, V)[] bucketList;
     private size_t _length;
 
     /**
@@ -188,8 +223,8 @@ struct HashMap(K, V) {
             return;
         }
 
-        if (minimumSize <= minimumBucketSize / 2) {
-            bucket = new Entry!(K, V)[](minimumBucketSize);
+        if (minimumSize <= minimumBucketListSize / 2) {
+            bucketList = new Entry!(K, V)[](minimumBucketListSize);
         } else {
             // Find the next largest power of two which will fit this size.
             size_t size = 8;
@@ -198,38 +233,39 @@ struct HashMap(K, V) {
                 size *= 2;
             }
 
-            bucket = new Entry!(K, V)[](newBucketSize(size));
+            bucketList = new Entry!(K, V)[](newBucketListSize(size));
         }
     }
 
-    @trusted pure nothrow
-    private void copyToBucket(ref Entry!(K, V)[] newBucket) const {
-        foreach(ref entry; bucket) {
+    @trusted
+    private void copyToBucketList(ref Entry!(K, V)[] newBucketList) const {
+        foreach(ref entry; bucketList) {
             if (entry._state != EntryState.occupied) {
                 // Skip holes in the container.
                 continue;
             }
 
             size_t index =
-                bucketSearch!(SearchFor.empty, K, V)
-                (newBucket, cast(K) entry._key);
+                bucketListSearch!(SearchFor.empty, K, V)
+                (newBucketList, cast(K) entry._key);
 
-            newBucket[index] = Entry!(K, V)(
+            newBucketList.setEntry(
+                index,
                 cast(K) entry._key,
                 cast(V) entry._value
             );
         }
     }
 
-    @safe pure nothrow
-    private void resize(size_t newBucketLength) in {
-        assert(newBucketLength > bucket.length);
+    @trusted
+    private void resize(size_t newBucketListLength) in {
+        assert(newBucketListLength > bucketList.length);
     } body {
-        auto newBucket = new Entry!(K, V)[](newBucketLength);
+        auto newBucketList = new Entry!(K, V)[](newBucketListLength);
 
-        copyToBucket(newBucket);
+        copyToBucketList(newBucketList);
 
-        bucket = newBucket;
+        bucketList = newBucketList;
     }
 
     /**
@@ -239,34 +275,33 @@ struct HashMap(K, V) {
      *     key = The key in the map.
      *     value = A value to set in the map.
      */
-    @trusted pure nothrow
     void opIndexAssign(V value, K key) {
-        if (bucket.length == 0) {
+        if (bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(minimumBucketSize);
+            resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (bucket.length - 1);
+            size_t index = computeHash(key) & (bucketList.length - 1);
 
-            bucket[index] = Entry!(K, V)(key, value);
+            bucketList.setEntry(index, key, value);
 
             return;
         }
 
-        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
 
-        if (bucket[index]._state != EntryState.occupied) {
+        if (bucketList[index]._state != EntryState.occupied) {
             // This slot is not occupied, so insert the entry here.
-            bucket[index] = Entry!(K, V)(key, value);
+            bucketList.setEntry(index, key, value);
             ++_length;
 
-            if (thresholdPassed(_length, bucket.length)) {
-                // Resize the bucket, as it passed the threshold.
-                resize(newBucketSize(bucket.length));
+            if (thresholdPassed(_length, bucketList.length)) {
+                // Resize the bucketList, as it passed the threshold.
+                resize(newBucketListSize(bucketList.length));
             }
         } else {
             // We have this key already, so update the value.
-            bucket[index]._value = value;
+            bucketList.updateEntryValue(index, value);
         }
     }
 
@@ -282,15 +317,14 @@ struct HashMap(K, V) {
      * Returns:
      *     A pointer to a value, a null pointer if a value is not set.
      */
-    @nogc @safe pure nothrow
     inout(V)* opBinaryRight(string op)(K key) inout if (op == "in") {
-        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
 
-        if (bucket[index]._state == EntryState.empty) {
+        if (bucketList[index]._state == EntryState.empty) {
             return null;
         }
 
-        return &(bucket[index]._value);
+        return &(bucketList[index]._value);
     }
 
     /**
@@ -304,16 +338,15 @@ struct HashMap(K, V) {
      * Returns:
      *     A value from the map.
      */
-    @nogc @safe pure nothrow
     ref inout(V) opIndex(K key) inout {
-        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
 
         assert(
-            bucket[index]._state != EntryState.empty,
+            bucketList[index]._state != EntryState.empty,
             "Key not found in HashMap!"
         );
 
-        return bucket[index]._value;
+        return bucketList[index]._value;
     }
 
     /**
@@ -327,15 +360,14 @@ struct HashMap(K, V) {
      * Returns:
      *     A value from the map, or the default value.
      */
-    @safe pure
     V get(V2)(K key, lazy V2 def) const if(is(V2 : V)) {
-        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
 
-        if (bucket[index]._state == EntryState.empty) {
+        if (bucketList[index]._state == EntryState.empty) {
             return def();
         }
 
-        return bucket[index]._value;
+        return bucketList[index]._value;
     }
 
     /**
@@ -348,15 +380,14 @@ struct HashMap(K, V) {
      * Returns:
      *     A value from the map, or the default value.
      */
-    @nogc @safe pure nothrow
     inout(V) get(K key) inout {
-        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
 
-        if (bucket[index]._state == EntryState.empty) {
+        if (bucketList[index]._state == EntryState.empty) {
             return V.init;
         }
 
-        return bucket[index]._value;
+        return bucketList[index]._value;
     }
 
     /**
@@ -376,37 +407,42 @@ struct HashMap(K, V) {
      * Returns:
      *     A reference to the value in the map.
      */
-    @trusted pure
     ref V setDefault(V2)(K key, lazy V2 value) if (is(V2 : V)) {
-        if (bucket.length == 0) {
+        if (bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(minimumBucketSize);
+            resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (bucket.length - 1);
+            size_t index = computeHash(key) & (bucketList.length - 1);
 
-            return (bucket[index] = Entry!(K, V)(key, value()))._value;
+            bucketList.setEntry(
+                index,
+                key,
+                V.init
+            );
+
+            return bucketList[index].value;
         }
 
-        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
 
-        if (bucket[index]._state == EntryState.empty) {
+        if (bucketList[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            bucket[index] = Entry!(K, V)(key, value());
+            bucketList.setEntry(index, key, value());
 
             ++_length;
 
-            if (thresholdPassed(_length, bucket.length)) {
-                // Resize the bucket, as it passed the threshold.
-                resize(newBucketSize(bucket.length));
+            if (thresholdPassed(_length, bucketList.length)) {
+                // Resize the bucketList, as it passed the threshold.
+                resize(newBucketListSize(bucketList.length));
 
                 // Update the index, it has now changed.
-                index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+                index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
             }
         }
 
         // Return a reference to the value.
-        return bucket[index]._value;
+        return bucketList[index]._value;
     }
 
     /**
@@ -424,37 +460,42 @@ struct HashMap(K, V) {
      * Returns:
      *     A reference to the value in the map.
      */
-    @trusted pure nothrow
     ref V setDefault(K key) {
-        if (bucket.length == 0) {
+        if (bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
-            resize(minimumBucketSize);
+            resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (bucket.length - 1);
+            size_t index = computeHash(key) & (bucketList.length - 1);
 
-            return (bucket[index] = Entry!(K, V)(key, V.init))._value;
+            bucketList.setEntry(
+                index,
+                key,
+                V.init
+            );
+
+            return bucketList[index].value;
         }
 
-        size_t index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
 
-        if (bucket[index]._state == EntryState.empty) {
+        if (bucketList[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            bucket[index] = Entry!(K, V)(key, V.init);
+            bucketList.setEntry(index, key, V.init);
 
             ++_length;
 
-            if (thresholdPassed(_length, bucket.length)) {
-                // Resize the bucket, as it passed the threshold.
-                resize(newBucketSize(bucket.length));
+            if (thresholdPassed(_length, bucketList.length)) {
+                // Resize the bucketList, as it passed the threshold.
+                resize(newBucketListSize(bucketList.length));
 
                 // Update the index, it has now changed.
-                index = bucketSearch!(SearchFor.notDeleted, K, V)(bucket, key);
+                index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
             }
         }
 
         // Return a reference to the value.
-        return bucket[index]._value;
+        return bucketList[index]._value;
     }
 
     /**
@@ -466,18 +507,17 @@ struct HashMap(K, V) {
      * Returns:
      *     true if a value was removed, otherwise false.
      */
-    @nogc @safe pure nothrow
     bool remove(K key) {
-        size_t index = bucketSearch!(SearchFor.any, K, V)(bucket, key);
+        size_t index = bucketListSearch!(SearchFor.any, K, V)(bucketList, key);
 
-        if (bucket[index]._state == EntryState.occupied) {
+        if (bucketList[index]._state == EntryState.occupied) {
             --_length;
 
-            // Clear the value and mark the slot as 'deleted', which is
+            // Zero the value and mark the slot as 'deleted', which is
             // treated often the same as 'empty', only we can skip over
             // deleted values to search for more values.
-            bucket[index]._value = V.init;
-            bucket[index]._state = EntryState.deleted;
+            bucketList.zeroEntryValue(index);
+            bucketList[index]._state = EntryState.deleted;
 
             return true;
         }
@@ -491,8 +531,7 @@ struct HashMap(K, V) {
      * Returns: The number of entries in the map, in constant time.
      */
     @nogc @safe pure nothrow
-    @property
-    size_t length() const {
+    @property size_t length() const {
         return _length;
     }
 
@@ -514,7 +553,7 @@ struct HashMap(K, V) {
             auto newMap = HashMap!(K, V)(_length);
             newMap._length = _length;
 
-            copyToBucket(newMap.bucket);
+            copyToBucketList(newMap.bucketList);
 
             return newMap;
         }
@@ -530,23 +569,22 @@ struct HashMap(K, V) {
      * Returns:
      *     true only if the maps are equal in length, keys, and values.
      */
-    @nogc @safe pure nothrow
     bool opEquals(ref const(HashMap!(K, V)) otherMap) const {
         if (_length != otherMap._length) {
             return false;
         }
 
-        originalBucketLoop: foreach(ref entry; bucket) {
+        foreach(ref entry; bucketList) {
             if (entry._state != EntryState.occupied) {
                 // Skip holes in the container.
                 continue;
             }
 
             size_t index =
-                bucketSearch!(SearchFor.notDeleted, K, V)
-                (otherMap.bucket, entry._key);
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (otherMap.bucketList, entry._key);
 
-            if (otherMap.bucket[index]._state == EntryState.empty) {
+            if (otherMap.bucketList[index]._state == EntryState.empty) {
                 return false;
             }
         }
@@ -555,18 +593,17 @@ struct HashMap(K, V) {
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool opEquals(const(HashMap!(K, V)) otherMap) const {
         return opEquals(otherMap);
     }
 }
 
 template HashMapKeyType(T) {
-    alias HashMapKeyType = typeof(ElementType!(typeof(T.bucket))._key);
+    alias HashMapKeyType = typeof(ElementType!(typeof(T.bucketList))._key);
 }
 
 template HashMapValueType(T) {
-    alias HashMapValueType = typeof(ElementType!(typeof(T.bucket))._value);
+    alias HashMapValueType = typeof(ElementType!(typeof(T.bucketList))._value);
 }
 
 // Check setting values, retrieval, removal, and lengths.
@@ -668,34 +705,105 @@ unittest {
 unittest {
     auto map = HashMap!(int, string)(3);
 
-    assert(map.bucket.length == minimumBucketSize);
+    assert(map.bucketList.length == minimumBucketListSize);
 }
 
 // Test the 'in' operator.
 unittest {
-    HashMap!(int, string) map;
+    // We'll test that our attributes work.
+    @safe pure nothrow
+    void runTest() {
+        HashMap!(int, string) map;
 
-    map[1] = "a";
-    map[2] = "b";
-    map[3] = "c";
+        map[1] = "a";
+        map[2] = "b";
+        map[3] = "c";
 
-    assert((4 in map) is null);
+        // Test that @nogc works.
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(map) map) {
+            assert((4 in map) is null);
 
-    assert(*(1 in map) == "a");
-    assert(*(2 in map) == "b");
-    assert(*(3 in map) == "c");
+            assert(*(1 in map) == "a");
+            assert(*(2 in map) == "b");
+            assert(*(3 in map) == "c");
+        }
+
+        runNoGCPart(map);
+    }
+
+    runTest();
+}
+
+// Test the map with a weird type which makes assignment harder.
+unittest {
+    struct WeirdType {
+    // The alignment could cause memory issues so we'll check for that.
+    align(1):
+        // This immutable member means we need to use memset above to set
+        // keys or values.
+        immutable(byte)* foo = null;
+        size_t x = 3;
+
+        @nogc @safe pure nothrow
+        this(int value) {
+            x = value;
+        }
+
+        @nogc @safe pure nothrow
+        size_t toHash() const {
+            return x;
+        }
+
+        @nogc @safe pure nothrow
+        bool opEquals(ref const(WeirdType) other) const {
+            return foo == other.foo && x == other.x;
+        }
+
+        @nogc @safe pure nothrow
+        bool opEquals(const(WeirdType) other) const {
+            return opEquals(other);
+        }
+    }
+
+    @safe pure nothrow
+    void runTest() {
+        HashMap!(WeirdType, string) map;
+
+        map[WeirdType(10)] = "a";
+
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(map) map) {
+            assert(map[WeirdType(10)] == "a");
+        }
+
+        runNoGCPart(map);
+    }
+
+    runTest();
 }
 
 // Test get with default init
 unittest {
-    HashMap!(int, string) map;
+    @safe pure nothrow
+    void runTest() {
+        HashMap!(int, string) map;
 
-    map[1] = "a";
+        map[1] = "a";
 
-    assert(map.get(1) == "a");
-    assert(map.get(2) is null);
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(map) map) {
+            assert(map.get(1) == "a");
+            assert(map.get(2) is null);
+        }
+        runNoGCPart(map);
+    }
+
+    runTest();
+
 }
 
+// BUG: The lazy argument here cannot be made to be nothrow, @nogc, etc.
 // Test get with a given default.
 unittest {
     HashMap!(int, string) map;
@@ -708,45 +816,68 @@ unittest {
 
 // Test opEquals
 unittest {
-    HashMap!(string, string) leftMap;
-    HashMap!(string, string) rightMap;
+    @safe pure nothrow
+    void runTest() {
+        HashMap!(string, string) leftMap;
+        HashMap!(string, string) rightMap;
 
-    // Give the left one a bit more, and take away from it.
-    leftMap["a"] = "1";
-    leftMap["b"] = "2";
-    leftMap["c"] = "3";
-    leftMap["d"] = "4";
-    leftMap["e"] = "5";
-    leftMap["f"] = "6";
-    leftMap["g"] = "7";
+        // Give the left one a bit more, and take away from it.
+        leftMap["a"] = "1";
+        leftMap["b"] = "2";
+        leftMap["c"] = "3";
+        leftMap["d"] = "4";
+        leftMap["e"] = "5";
+        leftMap["f"] = "6";
+        leftMap["g"] = "7";
+        leftMap["h"] = "8";
+        leftMap["i"] = "9";
+        leftMap["j"] = "10";
 
-    // Remove the extra keys
-    leftMap.remove("d");
-    leftMap.remove("e");
-    leftMap.remove("f");
-    leftMap.remove("g");
+        rightMap["a"] = "1";
+        rightMap["b"] = "2";
+        rightMap["c"] = "3";
 
-    rightMap["a"] = "1";
-    rightMap["b"] = "2";
-    rightMap["c"] = "3";
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(leftMap) leftMap, typeof(rightMap) rightMap) {
+            // Remove the extra keys
+            leftMap.remove("d");
+            leftMap.remove("e");
+            leftMap.remove("f");
+            leftMap.remove("g");
+            leftMap.remove("h");
+            leftMap.remove("i");
+            leftMap.remove("j");
 
-    // Now the two maps should have different buckets, but they
-    // should still be considered equal.
-    assert(leftMap == rightMap);
+            // Now the two maps should have different bucketLists, but they
+            // should still be considered equal.
+            assert(leftMap == rightMap);
+        }
+
+        runNoGCPart(leftMap, rightMap);
+    }
+
+    runTest();
 }
 
 // Test setDefault with default init
 unittest {
-    HashMap!(int, string) map;
+    @safe pure nothrow
+    void runTest() {
+        HashMap!(int, string) map;
 
-    map[1] = "a";
+        map[1] = "a";
 
-    assert(map.setDefault(1) == "a");
-    assert(map.setDefault(2) is null);
+        // setDefault for basic types with no explicit default ought to
+        // be nothrow.
+        assert(map.setDefault(1) == "a");
+        assert(map.setDefault(2) is null);
 
-    assert(map.length == 2);
+        assert(map.length == 2);
 
-    assert(map[2] is null);
+        assert(map[2] is null);
+    }
+
+    runTest();
 }
 
 // Test setDefault with a given value.
@@ -785,14 +916,14 @@ unittest {
  */
 struct KeyValueRange(K, V) {
 private:
-    Entry!(K, V)[] _bucket = null;
+    Entry!(K, V)[] _bucketList = null;
 public:
     @nogc @safe pure nothrow
-    this(Entry!(K, V)[] bucket) {
-        foreach(index, ref entry; bucket) {
+    this(Entry!(K, V)[] bucketList) {
+        foreach(index, ref entry; bucketList) {
             if (entry._state == EntryState.occupied) {
-                // Use a slice of the bucket starting here.
-                _bucket = bucket[index .. $];
+                // Use a slice of the bucketList starting here.
+                _bucketList = bucketList[index .. $];
 
                 return;
             }
@@ -800,8 +931,8 @@ public:
     }
 
     @nogc @trusted pure nothrow
-    this(const(Entry!(K, V)[]) bucket) {
-        this(cast(Entry!(K, V)[]) bucket);
+    this(const(Entry!(K, V)[]) bucketList) {
+        this(cast(Entry!(K, V)[]) bucketList);
     }
 
     @nogc @safe pure nothrow
@@ -812,9 +943,9 @@ public:
     @nogc @safe pure nothrow
     @property
     bool empty() const {
-        // We can check that the bucket is empty to check if this range is
+        // We can check that the bucketList is empty to check if this range is
         // empty, because we will clear it after we pop the last item.
-        return _bucket.length == 0;
+        return _bucketList.length == 0;
     }
 
     @nogc @safe pure nothrow
@@ -822,24 +953,24 @@ public:
     ref inout(Entry!(K, V)) front() inout in {
         assert(!empty());
     } body {
-        return _bucket[0];
+        return _bucketList[0];
     }
 
     @nogc @safe pure nothrow
     void popFront() in {
         assert(!empty());
     } body {
-        foreach(index; 1 .. _bucket.length) {
-            if (_bucket[index]._state == EntryState.occupied) {
-                // Use a slice of the bucket starting here.
-                _bucket = _bucket[index .. $];
+        foreach(index; 1 .. _bucketList.length) {
+            if (_bucketList[index]._state == EntryState.occupied) {
+                // Use a slice of the bucketList starting here.
+                _bucketList = _bucketList[index .. $];
 
                 return;
             }
         }
 
-        // Clear the bucket if we hit the end.
-        _bucket = null;
+        // Clear the bucketList if we hit the end.
+        _bucketList = null;
     }
 }
 
@@ -854,11 +985,11 @@ public:
 @nogc @safe pure nothrow
 auto byKeyValue(K, V)(auto ref HashMap!(K, V) map) {
     if (map.length == 0) {
-        // Empty ranges should not have to traverse the bucket at all.
+        // Empty ranges should not have to traverse the bucketList at all.
         return KeyValueRange!(K, V).init;
     }
 
-    return KeyValueRange!(K, V)(map.bucket);
+    return KeyValueRange!(K, V)(map.bucketList);
 }
 
 /// ditto
@@ -873,7 +1004,7 @@ auto byKeyValue(K, V)(auto ref const(HashMap!(K, V)) map) {
 
     return KeyValueRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucket
+        map.bucketList
     );
 }
 
@@ -889,7 +1020,7 @@ auto byKeyValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
 
     return KeyValueRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucket
+        map.bucketList
     );
 }
 
@@ -908,7 +1039,7 @@ unittest {
         valueList ~= item.value;
     }
 
-    // From the way the buckets are distributed, we know we'll get this back.
+    // From the way the bucketLists are distributed, we know we'll get this back.
     assert(keyList == [1, 2, 3]);
     assert(valueList == ["a", "b", "c"]);
 }
@@ -955,8 +1086,8 @@ private:
     KeyValueRange!(K, V) _keyValueRange;
 public:
     @nogc @safe pure nothrow
-    private this()(auto ref Entry!(K, V)[] bucket) {
-        _keyValueRange = KeyValueRange!(K, V)(bucket);
+    private this()(auto ref Entry!(K, V)[] bucketList) {
+        _keyValueRange = KeyValueRange!(K, V)(bucketList);
     }
 
     ///
@@ -1000,7 +1131,7 @@ auto byKey(K, V)(auto ref HashMap!(K, V) map) {
         return KeyRange!(K, V).init;
     }
 
-    return KeyRange!(K, V)(map.bucket);
+    return KeyRange!(K, V)(map.bucketList);
 }
 
 /// ditto
@@ -1015,7 +1146,7 @@ auto byKey(K, V)(auto ref const(HashMap!(K, V)) map) {
 
     return KeyRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucket
+        map.bucketList
     );
 }
 
@@ -1031,7 +1162,7 @@ auto byKey(K, V)(auto ref immutable(HashMap!(K, V)) map) {
 
     return KeyRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucket
+        map.bucketList
     );
 }
 
@@ -1048,7 +1179,7 @@ unittest {
         keyList ~= key;
     }
 
-    // From the way the buckets are distributed, we know we'll get this back.
+    // From the way the bucketLists are distributed, we know we'll get this back.
     assert(keyList == [1, 2, 3]);
 }
 
@@ -1074,8 +1205,8 @@ private:
     KeyValueRange!(K, V) _keyValueRange;
 public:
     @nogc @safe pure nothrow
-    private this()(auto ref Entry!(K, V)[] bucket) {
-        _keyValueRange = KeyValueRange!(K, V)(bucket);
+    private this()(auto ref Entry!(K, V)[] bucketList) {
+        _keyValueRange = KeyValueRange!(K, V)(bucketList);
     }
 
     ///
@@ -1119,7 +1250,7 @@ auto byValue(K, V)(auto ref HashMap!(K, V) map) {
         return ValueRange!(K, V).init;
     }
 
-    return ValueRange!(K, V)(map.bucket);
+    return ValueRange!(K, V)(map.bucketList);
 }
 
 /// ditto
@@ -1134,7 +1265,7 @@ auto byValue(K, V)(auto ref const(HashMap!(K, V)) map) {
 
     return ValueRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucket
+        map.bucketList
     );
 }
 
@@ -1150,7 +1281,7 @@ auto byValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
 
     return ValueRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucket
+        map.bucketList
     );
 }
 
@@ -1167,7 +1298,7 @@ unittest {
         valueList ~= value;
     }
 
-    // From the way the buckets are distributed, we know we'll get this back.
+    // From the way the bucketLists are distributed, we know we'll get this back.
     assert(valueList == ["a", "b", "c"]);
 }
 
@@ -1208,4 +1339,3 @@ unittest {
 
     auto x = map.dup;
 }
-
