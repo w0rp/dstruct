@@ -4,13 +4,21 @@
  */
 module dstruct.option;
 
-import std.traits: isPointer;
+import dstruct.support;
+
+import std.traits;
+import std.typecons;
+
+private struct SomeTypeMarker {}
+
+private enum isSomeType(T) = is(typeof(T.marker) == SomeTypeMarker);
 
 /**
  * This type represents a value which cannot be null by its contracts.
  */
 struct Some(T) if (is(T == class) || isPointer!T) {
 private:
+    enum marker = SomeTypeMarker.init;
     T _value;
 public:
     /// Disable default construction for Some!T types.
@@ -22,7 +30,7 @@ public:
      * Params:
      *     value = The value to create the object with.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this(U)(inout(U) value) inout if(is(U : T))
     in {
         assert(value !is null, "A null value was given to Some.");
@@ -35,7 +43,7 @@ public:
      *
      * Returns: The value wrapped by this object.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property inout(T) get() inout
     out(value) {
         assert(value !is null, "Some returned null!");
@@ -49,7 +57,7 @@ public:
      * Params:
      *     value = The value to set.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     void opAssign(U)(U value) if(is(U : T))
     in {
         assert(value !is null, "A null value was given to Some.");
@@ -69,7 +77,7 @@ public:
  *
  * Returns: The value wrapped in a non-nullable type.
  */
-@safe pure nothrow
+@nogc @safe pure nothrow
 inout(Some!T) some(T)(inout(T) value) {
     return inout(Some!T)(value);
 }
@@ -154,7 +162,7 @@ public:
      * Params:
      *     value = The value to create the object with.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this(U)(inout(U) value) inout if(is(U : T)) {
         _value = value;
     }
@@ -166,7 +174,7 @@ public:
      *
      * Returns: Some value from this object.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property Some!T get()
     in {
         assert(_value !is null, "get called for a null Option type!");
@@ -175,7 +183,7 @@ public:
     }
 
     /// ditto
-    @trusted pure nothrow
+    @nogc @trusted pure nothrow
     @property const(Some!T) get() const
     in {
         assert(_value !is null, "get called for a null Option type!");
@@ -184,7 +192,7 @@ public:
     }
 
     /// ditto
-    @trusted pure nothrow
+    @nogc @trusted pure nothrow
     @property immutable(Some!T) get() immutable
     in {
         assert(_value !is null, "get called for a null Option type!");
@@ -193,9 +201,75 @@ public:
     }
 
     /**
+     * Return some value from this reference, or a default value
+     * by calling a callable argument. (function pointer, delegate, etc.)
+     *
+     * The delegate can return a nullable type, but if the type is null
+     * an assertion error will be triggered, supposing the program is
+     * running in debug mode. The delegate may also return a Some type.
+     *
+     * Params:
+     *     dg = Some delegate returning a value.
+     *
+     * Returns: This value, if the delegate's value if it is null.
+     */
+    Some!T or(DG)(DG dg)
+    if (
+        isCallable!DG
+        && (ParameterTypeTuple!DG).length == 0
+        && is(ReturnType!DG : T)
+    ) {
+        if (_value is null) {
+            static if(isSomeType!(ReturnType!DG)) {
+                return cast(Some!T) dg();
+            } else {
+                return Some!T(dg());
+            }
+        }
+
+        return some(_value);
+    }
+
+    /// ditto
+    const(Some!T) or(DG)(DG dg) const
+    if (
+        isCallable!DG
+        && (ParameterTypeTuple!DG).length == 0
+        && is(Unqual!(ReturnType!DG) : Unqual!T)
+    ) {
+        if (_value is null) {
+            static if(isSomeType!(ReturnType!DG)) {
+                return cast(const(Some!T)) dg();
+            } else {
+                return const(Some!T)(dg());
+            }
+        }
+
+        return some(_value);
+    }
+
+    /// ditto
+    immutable(Some!T) or(DG)(DG dg) immutable
+    if (
+        isCallable!DG
+        && (ParameterTypeTuple!DG).length == 0
+        && is(Unqual!(ReturnType!DG) : Unqual!T)
+    ) {
+        if (_value is null) {
+            static if(isSomeType!(ReturnType!DG)) {
+                return cast(immutable(Some!T)) dg();
+            } else {
+                return immutable(Some!T)(dg());
+            }
+        }
+
+        return some(_value);
+    }
+
+    /**
      * Returns: True if the value this option type does not hold a value.
      */
-    @trusted pure nothrow
+    @nogc @safe pure nothrow
     @property bool isNull() const {
         return _value is null;
     }
@@ -206,57 +280,10 @@ public:
      * Params:
      *     value = The value to set.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     void opAssign(U)(U value) if(is(U : T)) {
         _value = value;
     }
-
-    /**
-     * Permit foreach over an option type.
-     *
-     * Example:
-     * ---
-     *     Option!T value = null;
-     *
-     *     foreach(someValue; value) {
-     *         // We never enter this loop body.
-     *     }
-     *
-     *     value = new T();
-     *
-     *     foreach(someValue; value) {
-     *         // We enter this loop body exactly once.
-     *     }
-     * ---
-     */
-    int opApply(int delegate(Some!T) dg) {
-        if (_value !is null) {
-            return dg(Some!T(_value));
-        }
-
-        return 0;
-    }
-
-    /// ditto
-    int opApply(int delegate(const(Some!T)) dg) const {
-        if (_value !is null) {
-            return dg(cast(const) Some!T(cast(T) _value));
-        }
-
-        return 0;
-    }
-
-    /// ditto
-    int opApply(int delegate(immutable(Some!T)) dg) immutable {
-        if (_value !is null) {
-            return dg(cast(immutable) Some!T(cast(T) _value));
-        }
-
-        return 0;
-    }
-
-    /// Reverse iteration is exactly the same as forward iteration.
-    alias opApplyReverse = opApply;
 }
 
 /**
@@ -267,13 +294,13 @@ public:
  *
  * Returns: The value wrapped in an option type.
  */
-@safe pure nothrow
+@nogc @safe pure nothrow
 inout(Option!T) option(T)(inout(T) value) {
     return inout(Option!T)(value);
 }
 
 /// ditto
-@safe pure nothrow
+@nogc @safe pure nothrow
 inout(Option!T) option(T)(inout(Some!T) value) {
     return option(value._value);
 }
@@ -329,120 +356,109 @@ unittest {
     assert(is(typeof(someI) == immutable(Some!Klass)));
 }
 
-// Test foreach on option across constness.
+// Test .or, with the nice type qualifiers.
 unittest {
     class Klass {}
 
-    Option!Klass m = new Klass();
-    const Option!Klass c = new const Klass();
-    immutable Option!Klass i = new immutable Klass();
+    @safe pure nothrow
+    void runTest() {
+        Option!Klass m;
+        const Option!Klass c;
+        immutable Option!Klass i;
 
-    size_t mCount = 0;
-    size_t cCount = 0;
-    size_t iCount = 0;
+        auto someM = m.or(()=> some(new Klass()));
+        auto someC = c.or(()=> some(new const(Klass)()));
+        auto someI = i.or(()=> some(new immutable(Klass)()));
 
-    foreach(val; m) {
-        ++mCount;
+        assert(is(typeof(someM) == Some!Klass));
+        assert(is(typeof(someC) == const(Some!Klass)));
+        assert(is(typeof(someI) == immutable(Some!Klass)));
+
+        auto someOtherM = m.or(()=> new Klass());
+        auto someOtherC = c.or(()=> new const(Klass)());
+        auto someOtherI = i.or(()=> new immutable(Klass)());
+
+        assert(is(typeof(someOtherM) == Some!Klass));
+        assert(is(typeof(someOtherC) == const(Some!Klass)));
+        assert(is(typeof(someOtherI) == immutable(Some!Klass)));
     }
 
-    foreach(val; c) {
-        ++cCount;
-    }
-
-    foreach(val; i) {
-        ++iCount;
-    }
-
-    assert(mCount == 1);
-    assert(cCount == 1);
-    assert(iCount == 1);
+    runTest();
 }
 
-// Test empty foreach
+// Test .or with subclasses
 unittest {
     class Klass {}
+    class SubKlass : Klass {}
 
-    Option!Klass m = null;
-    const Option!Klass c = null;
-    immutable Option!Klass i = null;
+    @safe pure nothrow
+    void runTest() {
+        Option!Klass m;
+        const Option!Klass c;
+        immutable Option!Klass i;
 
-    size_t mCount = 0;
-    size_t cCount = 0;
-    size_t iCount = 0;
+        auto someM = m.or(()=> some(new SubKlass()));
+        auto someC = c.or(()=> some(new const(SubKlass)()));
+        auto someI = i.or(()=> some(new immutable(SubKlass)()));
 
-    foreach(val; m) {
-        ++mCount;
+        assert(is(typeof(someM) == Some!Klass));
+        assert(is(typeof(someC) == const(Some!Klass)));
+        assert(is(typeof(someI) == immutable(Some!Klass)));
+
+        auto someOtherM = m.or(()=> new SubKlass());
+        auto someOtherC = c.or(()=> new const(SubKlass)());
+        auto someOtherI = i.or(()=> new immutable(SubKlass)());
+
+        assert(is(typeof(someOtherM) == Some!Klass));
+        assert(is(typeof(someOtherC) == const(Some!Klass)));
+        assert(is(typeof(someOtherI) == immutable(Some!Klass)));
     }
 
-    foreach(val; c) {
-        ++cCount;
-    }
-
-    foreach(val; i) {
-        ++iCount;
-    }
-
-    assert(mCount == 0);
-    assert(cCount == 0);
-    assert(iCount == 0);
+    runTest();
 }
 
-// Test foreach_reverse on option across constness.
+// Test .or with bad functions
 unittest {
     class Klass {}
 
-    Option!Klass m = new Klass();
-    const Option!Klass c = new const Klass();
-    immutable Option!Klass i = new immutable Klass();
+    @system
+    Klass mutFunc() {
+        if (1 == 2) {
+            throw new Exception("");
+        }
 
-    size_t mCount = 0;
-    size_t cCount = 0;
-    size_t iCount = 0;
-
-    foreach_reverse(val; m) {
-        ++mCount;
+        return new Klass();
     }
 
-    foreach_reverse(val; c) {
-        ++cCount;
+    @system
+    const(Klass) constFunc() {
+        if (1 == 2) {
+            throw new Exception("");
+        }
+
+        return new const(Klass)();
     }
 
-    foreach_reverse(val; i) {
-        ++iCount;
+    @system
+    immutable(Klass) immutableFunc() {
+        if (1 == 2) {
+            throw new Exception("");
+        }
+
+        return new immutable(Klass)();
     }
 
-    assert(mCount == 1);
-    assert(cCount == 1);
-    assert(iCount == 1);
-}
+    Option!Klass m;
+    const Option!Klass c;
+    immutable Option!Klass i;
 
-// Test empty foreach_reverse
-unittest {
-    class Klass {}
+    auto someM = m.or(&mutFunc);
+    auto someC = c.or(&constFunc);
+    auto someI = i.or(&immutableFunc);
 
-    Option!Klass m = null;
-    const Option!Klass c = null;
-    immutable Option!Klass i = null;
-
-    size_t mCount = 0;
-    size_t cCount = 0;
-    size_t iCount = 0;
-
-    foreach_reverse(val; m) {
-        ++mCount;
-    }
-
-    foreach_reverse(val; c) {
-        ++cCount;
-    }
-
-    foreach_reverse(val; i) {
-        ++iCount;
-    }
-
-    assert(mCount == 0);
-    assert(cCount == 0);
-    assert(iCount == 0);
+    assert(is(typeof(someM) == Some!Klass));
+    assert(is(typeof(someC) == const(Some!Klass)));
+    assert(is(typeof(someI) == immutable(Some!Klass)));
 }
 
 // Test setting Option from Some
@@ -456,7 +472,6 @@ unittest {
     Option!Klass m2 = option(some(new Klass()));
     const Option!Klass c2 = option(some(new const Klass()));
     immutable Option!Klass i2 = option(some(new immutable Klass()));
-
 
     Option!Klass m3;
 
@@ -491,13 +506,13 @@ public:
      * Params:
      *     value = The value to create the range with.
      */
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     this(U)(U value) if(is(U : T)) {
         _value = value;
     }
 
     ///
-    @trusted pure nothrow
+    @nogc @trusted pure nothrow
     void popFront()
     in {
         assert(_value !is null, "Attempted to pop an empty range!");
@@ -514,7 +529,7 @@ public:
     alias popBack = popFront;
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property inout(T) front() inout {
         return _value;
     }
@@ -523,25 +538,25 @@ public:
     alias back = front;
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property bool empty() const {
         return _value is null;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property typeof(this) save() {
         return this;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     @property size_t length() const {
         return _value !is null ? 1 : 0;
     }
 
     ///
-    @safe pure nothrow
+    @nogc @safe pure nothrow
     inout(T) opIndex(size_t index) inout
     in {
         assert(index <= length, "Index out of bounds!");
@@ -561,7 +576,7 @@ public:
  *
  * Returns: A range of 0 or 1 values.
  */
-@safe pure nothrow
+@nogc @safe pure nothrow
 OptionRange!T range(T)(Option!T optionalValue) {
     if (optionalValue.isNull) {
         return typeof(return).init;
@@ -571,13 +586,13 @@ OptionRange!T range(T)(Option!T optionalValue) {
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 OptionRange!(const(T)) range(T)(const(Option!T) optionalValue) {
     return cast(typeof(return)) range(cast(Option!T)(optionalValue));
 }
 
 /// ditto
-@trusted pure nothrow
+@nogc @trusted pure nothrow
 OptionRange!(immutable(T)) range(T)(immutable(Option!T) optionalValue) {
     return cast(typeof(return)) range(cast(Option!T)(optionalValue));
 }
@@ -669,4 +684,3 @@ unittest {
 
     assert(barSum == 0);
 }
-
