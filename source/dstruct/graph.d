@@ -1,9 +1,6 @@
 module dstruct.graph;
 
-import std.algorithm;
-import std.range;
-import std.array;
-import std.typecons;
+import core.stdc.string: memmove;
 
 import dstruct.support;
 import dstruct.map;
@@ -16,15 +13,24 @@ enum EdgeDirection : bool {
     directed,
 }
 
-@nogc @safe pure nothrow
+@trusted
 private bool findAndRemove(T)(ref T[] arr, ref T needle) {
     foreach(index; 0 .. arr.length) {
-        if (arr[index] == needle) {
-            foreach(newIndex; index .. arr.length - 1) {
-                arr[newIndex] = arr[newIndex + 1];
+        if (cast() arr[index] == cast() needle) {
+            // When the index we find is right at the end, we shouldn't
+            // move anything, just reduce the slice on the right by one.
+            if (index != arr.length - 1) {
+                // Shift all of the array elements back.
+                memmove(
+                    cast(void*) &arr[index],
+                    cast(void*) &arr[index + 1],
+                    T.sizeof * (arr.length - index)
+                );
             }
 
+            // Now shrink the slice by one element.
             arr = arr[0 .. $ - 1];
+
             return true;
         }
     }
@@ -32,9 +38,17 @@ private bool findAndRemove(T)(ref T[] arr, ref T needle) {
     return false;
 }
 
-@safe pure nothrow
 private void addIfMissing(T)(ref T[] arr, ref T value) {
-    if (arr.countUntil(value) < 0) {
+    bool found = false;
+
+    foreach(ref otherValue; arr) {
+        if (cast() value == cast() otherValue) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
         arr ~= value;
     }
 }
@@ -57,13 +71,11 @@ public:
     /**
      * Add a vertex to the graph.
      */
-    @safe pure nothrow
     void addVertex(ref Vertex vertex) {
         adjacencyMap.setDefault(vertex);
     }
 
     /// ditto
-    @safe pure nothrow
     void addVertex(Vertex vertex) {
         addVertex(vertex);
     }
@@ -75,7 +87,6 @@ public:
      *
      * Returns: true if a vertex was removed.
      */
-    @nogc @safe pure nothrow
     bool removeVertex(ref Vertex vertex) {
         // Try to remove the vertex's adjacency mapping first.
         if (!adjacencyMap.remove(vertex)) {
@@ -90,7 +101,6 @@ public:
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool removeVertex(Vertex vertex) {
         return removeVertex(vertex);
     }
@@ -98,13 +108,11 @@ public:
     /**
      * Returns: true if the vertex is in the graph.
      */
-    @nogc @safe pure nothrow
     bool hasVertex(ref Vertex vertex) const {
         return (vertex in adjacencyMap) !is null;
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool hasVertex(Vertex vertex) const {
         return hasVertex(vertex);
     }
@@ -114,7 +122,6 @@ public:
      *
      * New vertices will be added to the graph automatically.
      */
-    @safe pure nothrow
     void addEdge(ref Vertex left, ref Vertex right) {
         adjacencyMap.setDefault(left).addIfMissing(right);
 
@@ -126,19 +133,16 @@ public:
     }
 
     /// ditto
-    @safe pure nothrow
     void addEdge(ref Vertex left, Vertex right) {
         addEdge(left, right);
     }
 
     /// ditto
-    @safe pure nothrow
     void addEdge(Vertex left, ref Vertex right) {
         addEdge(left, right);
     }
 
     /// ditto
-    @safe pure nothrow
     void addEdge(Vertex left, Vertex right) {
         addEdge(left, right);
     }
@@ -150,7 +154,6 @@ public:
      *
      * Returns: true if an edge was removed.
      */
-    @nogc @safe pure nothrow
     bool removeEdge(ref Vertex left, ref Vertex right) {
         auto listPtr = left in adjacencyMap;
 
@@ -170,19 +173,16 @@ public:
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool removeEdge(ref Vertex left, Vertex right) {
         return removeEdge(left, right);
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool removeEdge(Vertex left, ref Vertex right) {
         return removeEdge(left, right);
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool removeEdge(Vertex left, Vertex right) {
         return removeEdge(left, right);
     }
@@ -192,29 +192,31 @@ public:
      *
      * Returns: true if the edge exists in the graph.
      */
-    @nogc @safe pure nothrow
     bool hasEdge(ref Vertex left, ref Vertex right) const {
         if (auto listPtr = left in adjacencyMap) {
-            return countUntil(*listPtr, right) > -1;
+            foreach(ref outgoingVertex; *listPtr) {
+                if (cast() right == cast() outgoingVertex) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         return false;
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool hasEdge(ref Vertex left, Vertex right) const {
         return hasEdge(left, right);
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool hasEdge(Vertex left, ref Vertex right) const {
         return hasEdge(left, right);
     }
 
     /// ditto
-    @nogc @safe pure nothrow
     bool hasEdge(Vertex left, Vertex right) const {
         return hasEdge(left, right);
     }
@@ -225,7 +227,6 @@ public:
      *
      * Returns: The number of vertices in this graph.
      */
-    @nogc @safe pure nothrow
     @property
     size_t vertexCount() const {
         return adjacencyMap.length;
@@ -239,7 +240,6 @@ public:
      *
      * Returns: The number of directed edges in this graph.
      */
-    @nogc @safe pure nothrow
     size_t directedEdgeCount() const {
         size_t count = 0;
 
@@ -256,7 +256,6 @@ public:
      *
      * Returns: The number of edges in this graph.
      */
-    @nogc @safe pure nothrow
     size_t edgeCount() const {
         static if (!isDirected) {
             return directedEdgeCount() / 2;
@@ -306,99 +305,190 @@ unittest {
 
 // Test adding vertices and the vertex count on graphs
 unittest {
-    Graph!string graph;
+    @safe pure nothrow
+    void runTest() {
+        Graph!string graph;
 
-    foreach(symbol; ["a", "b", "c", "d", "a"]) {
-        graph.addVertex(symbol);
+        foreach(symbol; ["a", "b", "c", "d", "a"]) {
+            graph.addVertex(symbol);
+        }
+
+        assert(graph.vertexCount == 4);
     }
 
-    assert(graph.vertexCount == 4);
+    runTest();
 }
 
 unittest {
-    Digraph!string digraph;
+    @safe pure nothrow
+    void runTest() {
+        Digraph!string digraph;
 
-    foreach(symbol; ["a", "b", "c", "d", "a"]) {
-        digraph.addVertex(symbol);
+        foreach(symbol; ["a", "b", "c", "d", "a"]) {
+            digraph.addVertex(symbol);
+        }
+
+        // Test that @nogc works.
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(digraph) digraph) {
+            assert(digraph.vertexCount == 4);
+        }
+
+        runNoGCPart(digraph);
     }
 
-    assert(digraph.vertexCount == 4);
+    runTest();
 }
 
 // Test adding edges and the edge count.
 unittest {
-    Graph!byte graph;
-
     static assert(isUndirectedGraph!(Graph!byte, byte));
 
-    byte[2][] edgeList = [[1, 2], [2, 1], [3, 4], [5, 6]];
+    @safe pure nothrow
+    void runTest() {
+        Graph!byte graph;
 
-    foreach(edge; edgeList) {
-        graph.addEdge(edge[0], edge[1]);
+        byte[2][] edgeList = [[1, 2], [2, 1], [3, 4], [5, 6]];
+
+        foreach(edge; edgeList) {
+            graph.addEdge(edge[0], edge[1]);
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(graph) graph) {
+            assert(graph.directedEdgeCount == 6);
+            assert(graph.edgeCount == 3);
+            assert(graph.hasVertex(1));
+        }
+
+        runNoGCPart(graph);
     }
 
-    assert(graph.directedEdgeCount == 6);
-    assert(graph.edgeCount == 3);
-    assert(graph.hasVertex(1));
+    runTest();
 }
 
 // Test adding edges and the edge count.
 unittest {
-    Digraph!byte graph;
+    @safe pure nothrow
+    void runTest() {
+        Digraph!byte graph;
 
-    byte[2][] edgeList = [[1, 2], [2, 1], [3, 4], [5, 6]];
+        byte[2][] edgeList = [[1, 2], [2, 1], [3, 4], [5, 6]];
 
-    foreach(edge; edgeList) {
-        graph.addEdge(edge[0], edge[1]);
+        foreach(edge; edgeList) {
+            graph.addEdge(edge[0], edge[1]);
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(graph) graph) {
+            assert(graph.directedEdgeCount == 4);
+            assert(graph.edgeCount == 4);
+            assert(graph.hasVertex(1));
+        }
+
+        runNoGCPart(graph);
     }
 
-    assert(graph.directedEdgeCount == 4);
-    assert(graph.edgeCount == 4);
-    assert(graph.hasVertex(1));
+    runTest();
 }
 
 // Test adding one undirected graph edge implies the reverse.
 unittest {
-    Graph!byte graph;
+    @safe pure nothrow
+    void runTest() {
+        Graph!byte graph;
 
-    byte[2][] edgeList = [[1, 2], [3, 4]];
+        byte[2][] edgeList = [[1, 2], [3, 4]];
 
-    foreach(edge; edgeList) {
-        graph.addEdge(edge[0], edge[1]);
+        foreach(edge; edgeList) {
+            graph.addEdge(edge[0], edge[1]);
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(graph) graph) {
+            assert(graph.edgeCount == 2);
+            assert(graph.hasEdge(2, 1));
+            assert(graph.hasEdge(4, 3));
+        }
+
+        runNoGCPart(graph);
     }
 
-    assert(graph.edgeCount == 2);
-    assert(graph.hasEdge(2, 1));
-    assert(graph.hasEdge(4, 3));
+    runTest();
 }
 
 // Test that removing a vertex also removes the edges.
 unittest {
-    Digraph!byte graph;
+    @safe pure nothrow
+    void runTest() {
+        Digraph!byte graph;
 
-    byte[2][] edgeList = [[1, 2], [3, 1], [2, 3]];
+        byte[2][] edgeList = [[1, 2], [3, 1], [2, 3]];
 
-    foreach(edge; edgeList) {
-        graph.addEdge(edge[0], edge[1]);
+        foreach(edge; edgeList) {
+            graph.addEdge(edge[0], edge[1]);
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(graph) graph) {
+            assert(graph.removeVertex(1));
+            assert(graph.edgeCount == 1);
+            assert(graph.hasEdge(2, 3));
+        }
+
+        runNoGCPart(graph);
     }
 
-    assert(graph.removeVertex(1));
-    assert(graph.edgeCount == 1);
-    assert(graph.hasEdge(2, 3));
+    runTest();
+}
+
+// Test adding and removing vertices for immutable objects
+unittest {
+    struct SomeType {
+        int x;
+    }
+
+    @safe pure nothrow
+    void runTest() {
+        Digraph!(immutable(SomeType)) graph;
+
+        graph.addVertex(immutable(SomeType)(3));
+        graph.addVertex(immutable(SomeType)(4));
+
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(graph) graph) {
+            assert(graph.removeVertex(immutable(SomeType)(3)));
+            assert(graph.removeVertex(immutable(SomeType)(4)));
+        }
+
+        runNoGCPart(graph);
+    }
+
+    runTest();
 }
 
 unittest {
-    Graph!byte graph;
+    @safe pure nothrow
+    void runTest() {
+        Graph!byte graph;
 
-    byte[2][] edgeList = [[1, 2], [3, 1], [2, 3]];
+        byte[2][] edgeList = [[1, 2], [3, 1], [2, 3]];
 
-    foreach(edge; edgeList) {
-        graph.addEdge(edge[0], edge[1]);
+        foreach(edge; edgeList) {
+            graph.addEdge(edge[0], edge[1]);
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(graph) graph) {
+            assert(graph.removeVertex(1));
+            assert(graph.edgeCount == 1);
+            assert(graph.hasEdge(2, 3));
+        }
+
+        runNoGCPart(graph);
     }
 
-    assert(graph.removeVertex(1));
-    assert(graph.edgeCount == 1);
-    assert(graph.hasEdge(2, 3));
+    runTest();
 }
 
 /**
@@ -431,23 +521,35 @@ auto vertices(V, EdgeDirection edgeDirection)
 }
 
 unittest {
-    Digraph!string graph;
+    @safe pure nothrow
+    void runTest() {
+        Digraph!string graph;
 
-    graph.addEdge("a", "b");
-    graph.addEdge("a", "c");
-    graph.addEdge("a", "d");
-    graph.addEdge("b", "e");
-    graph.addEdge("b", "f");
-    graph.addEdge("b", "g");
+        graph.addEdge("a", "b");
+        graph.addEdge("a", "c");
+        graph.addEdge("a", "d");
+        graph.addEdge("b", "e");
+        graph.addEdge("b", "f");
+        graph.addEdge("b", "g");
 
-    string[] vertexList;
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(graph) graph) {
+            foreach(vertex; graph.vertices) {}
+        }
 
-    foreach(vertex; graph.vertices) {
-        vertexList ~= vertex;
+        runNoGCPart(graph);
+
+        string[] vertexList;
+
+        foreach(vertex; graph.vertices) {
+            vertexList ~= vertex;
+        }
+
+        // We know we will get this order from how the hashing works.
+        assert(vertexList == ["a", "b", "c", "d", "e", "f", "g"]);
     }
 
-    // We know we will get this order from how the hashing works.
-    assert(vertexList == ["a", "b", "c", "d", "e", "f", "g"]);
+    runTest();
 }
 
 unittest {
@@ -559,35 +661,47 @@ auto edges(V, EdgeDirection edgeDirection)
 }
 
 unittest {
-    Digraph!string graph;
+    @safe pure nothrow
+    void runTest() {
+        Digraph!string graph;
 
-    graph.addEdge("a", "b");
-    graph.addEdge("a", "c");
-    graph.addEdge("a", "d");
-    graph.addEdge("b", "e");
-    graph.addEdge("b", "f");
-    graph.addEdge("b", "g");
+        graph.addEdge("a", "b");
+        graph.addEdge("a", "c");
+        graph.addEdge("a", "d");
+        graph.addEdge("b", "e");
+        graph.addEdge("b", "f");
+        graph.addEdge("b", "g");
 
-    Edge!string[] edgeList;
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(graph) graph) {
+            foreach(vertex; graph.edges) {}
+        }
 
-    foreach(edge; graph.edges) {
-        edgeList ~= edge;
+        runNoGCPart(graph);
+
+        Edge!string[] edgeList;
+
+        foreach(edge; graph.edges) {
+            edgeList ~= edge;
+        }
+
+        // We know we will get this order from how the hashing works.
+        assert(edgeList.length);
+        assert(edgeList[0].from == "a");
+        assert(edgeList[0].to == "b");
+        assert(edgeList[1].from == "a");
+        assert(edgeList[1].to == "c");
+        assert(edgeList[2].from == "a");
+        assert(edgeList[2].to == "d");
+        assert(edgeList[3].from == "b");
+        assert(edgeList[3].to == "e");
+        assert(edgeList[4].from == "b");
+        assert(edgeList[4].to == "f");
+        assert(edgeList[5].from == "b");
+        assert(edgeList[5].to == "g");
     }
 
-    // We know we will get this order from how the hashing works.
-    assert(edgeList.length);
-    assert(edgeList[0].from == "a");
-    assert(edgeList[0].to == "b");
-    assert(edgeList[1].from == "a");
-    assert(edgeList[1].to == "c");
-    assert(edgeList[2].from == "a");
-    assert(edgeList[2].to == "d");
-    assert(edgeList[3].from == "b");
-    assert(edgeList[3].to == "e");
-    assert(edgeList[4].from == "b");
-    assert(edgeList[4].to == "f");
-    assert(edgeList[5].from == "b");
-    assert(edgeList[5].to == "g");
+    runTest();
 }
 
 unittest {
@@ -603,4 +717,3 @@ unittest {
     assert(is(typeof(cVertices.front) == Edge!(const(string))));
     assert(is(typeof(iVertices.front) == Edge!(immutable(string))));
 }
-

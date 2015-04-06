@@ -3,9 +3,9 @@ module dstruct.map;
 import core.memory;
 import core.exception;
 
-import std.c.string: memcpy, memset;
+import core.stdc.string: memcpy, memset;
 
-import std.range;
+import std.range : ElementType;
 
 import dstruct.support;
 
@@ -163,7 +163,7 @@ private size_t bucketListSearch(SearchFor searchFor, K, V)
 // Add an entry into the bucket list.
 // memcpy is used here because some types have immutable members which cannot
 // be changed, so we have to force them into the array this way.
-@trusted
+@nogc @trusted pure nothrow
 private void setEntry(K, V)(ref Entry!(K, V)[] bucketList,
 size_t index, auto ref K key, auto ref V value) {
     enum valueOffset = alignedSize(K.sizeof);
@@ -176,7 +176,7 @@ size_t index, auto ref K key, auto ref V value) {
 }
 
 // Update just the value for an entry.
-@trusted
+@nogc @trusted pure nothrow
 private void updateEntryValue(K, V)(ref Entry!(K, V)[] bucketList,
 size_t index, auto ref V value) {
     enum valueOffset = alignedSize(K.sizeof);
@@ -184,7 +184,7 @@ size_t index, auto ref V value) {
     memcpy(cast(void*) &bucketList[index] + valueOffset, &value, V.sizeof);
 }
 
-@trusted
+@nogc @trusted pure nothrow
 private void zeroEntryValue(K, V)(ref Entry!(K, V)[] bucketList,
 size_t index) {
     enum valueOffset = alignedSize(K.sizeof);

@@ -6,7 +6,7 @@
  */
 module dstruct.matrix;
 
-import std.traits;
+import std.traits : isNumeric, Unqual;
 
 // A private implementation of matrix multiplication for use in types.
 private auto matrixMultiply(ResultType, T, U)
@@ -268,7 +268,7 @@ public:
 
         return result;
     }
-    
+
     /// ditto
     @safe pure nothrow
     Matrix!Number opBinary(string op, OtherNumber)
@@ -304,7 +304,7 @@ public:
 
         return result;
     }
-    
+
     /// ditto
     @safe pure nothrow
     Matrix!Number opBinary(string op, OtherNumber)
@@ -333,7 +333,7 @@ public:
     /// ditto
     @safe pure nothrow
     Matrix!OtherNumber opBinary(string op, OtherNumber)
-    (const Matrix!OtherNumber other) const 
+    (const Matrix!OtherNumber other) const
     if((op == "*") && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
         opBinary!(op, OtherNumber)(other);
     }
@@ -372,7 +372,7 @@ public:
             && _columnCount == other._columnCount
             && _data == other._data;
     }
-    
+
     /// ditto
     @safe pure nothrow
     bool opEquals(const Matrix!Number other) const {
@@ -569,7 +569,7 @@ unittest {
     }
 }
 
-// Test matrix multiplication, with a numeric type on the 
+// Test matrix multiplication, with a numeric type on the
 // left which implicitly converts to the right.
 unittest {
     auto left = Matrix!int(1, 1);
@@ -594,7 +594,7 @@ public:
         _data = matrix._data;
         _columnCount = matrix._columnCount;
     }
-    
+
     /// ditto
     @safe pure nothrow
     this(const Matrix!Number matrix) {
@@ -611,7 +611,7 @@ public:
     @safe pure nothrow
     void popFront() {
         assert(!empty, "Attempted popFront on an empty Rows range!");
-        
+
         _data = _data[_columnCount .. $];
     }
 
@@ -619,7 +619,7 @@ public:
     @safe pure nothrow
     @property const(Number[]) front() const {
         assert(!empty, "Cannot get the front of an empty Rows range!");
-        
+
         return this[0];
     }
 
@@ -633,7 +633,7 @@ public:
     @safe pure nothrow
     void popBack() {
         assert(!empty, "Attempted popBack on an empty Rows range!");
-        
+
         _data = _data[0 .. $ - _columnCount];
     }
 
@@ -641,7 +641,7 @@ public:
     @safe pure nothrow
     @property const(Number[]) back() const {
         assert(!empty, "Cannot get the back of an empty Rows range!");
-        
+
         return this[$ - 1];
     }
 
@@ -657,7 +657,7 @@ public:
         assert(index < length, "Out of bounds index given to Rows opIndex!");
     } body {
         size_t offset = index * _columnCount;
-        
+
         return _data[offset .. offset + _columnCount];
     }
 
@@ -670,7 +670,7 @@ public:
 
         return _data.length / _columnCount;
     }
-    
+
     /// ditto
     @safe pure nothrow
     @property size_t opDollar() const {
@@ -741,7 +741,7 @@ unittest {
 unittest {
     Matrix!int mat;
 
-    assert(mat.rows.length == 0); 
+    assert(mat.rows.length == 0);
 }
 
 /**
@@ -922,7 +922,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
      * Returns: The product of two matrices.
      */
     @safe pure nothrow
-    Matrix!(Number, rowCount, otherColumnCount) 
+    Matrix!(Number, rowCount, otherColumnCount)
     opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
     (ref const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
     if((op == "*") && (columnCount == otherRowCount) && is(OtherNumber : Number)) {
@@ -935,7 +935,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
 
     /// ditto
     @safe pure nothrow
-    Matrix!(Number, rowCount, otherColumnCount) 
+    Matrix!(Number, rowCount, otherColumnCount)
     opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
     (const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
     if((op == "*") && (columnCount == otherRowCount) && is(OtherNumber : Number)) in {
@@ -943,7 +943,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
     }
 
     @safe pure nothrow
-    Matrix!(OtherNumber, rowCount, otherColumnCount) 
+    Matrix!(OtherNumber, rowCount, otherColumnCount)
     opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
     (ref const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
     if((op == "*") && (columnCount == otherRowCount) && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
@@ -955,7 +955,7 @@ if(isNumeric!Number && _rowCount > 0 && _columnCount > 0) {
     }
 
     @safe pure nothrow
-    Matrix!(OtherNumber, rowCount, otherColumnCount) 
+    Matrix!(OtherNumber, rowCount, otherColumnCount)
     opBinary(string op, OtherNumber, size_t otherRowCount, size_t otherColumnCount)
     (const(Matrix!(OtherNumber, otherRowCount, otherColumnCount)) other) const
     if((op == "*") && (columnCount == otherRowCount) && !is(Number == OtherNumber) && is(Number : OtherNumber)) {
@@ -1345,7 +1345,7 @@ unittest {
     }
 }
 
-// Test matrix multiplication, with a numeric type on the 
+// Test matrix multiplication, with a numeric type on the
 // left which implicitly converts to the right.
 unittest {
     Matrix!(int, 1, 1) left;
@@ -1353,3 +1353,4 @@ unittest {
 
     Matrix!(long, 1, 1) result = left * right;
 }
+
