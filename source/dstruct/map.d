@@ -549,6 +549,24 @@ struct HashMap(K, V) {
         return _length;
     }
 
+    /**
+     * Returns: True if this map is empty.
+     */
+    @nogc @safe pure nothrow
+    @property bool empty() const {
+        return _length == 0;
+    }
+
+    /**
+     * Implement boolean conversion for a map.
+     *
+     * Returns: True if this set is not empty.
+     */
+    @nogc @safe pure nothrow
+    bool opCast(T: bool)() const {
+        return !empty;
+    }
+
     static if(isDupable!K && isDupable!V) {
         /**
          * Copy an existing map into a new mutable map.
@@ -815,6 +833,52 @@ unittest {
 
     runTest();
 
+}
+
+// Test length, empty, and cast(bool)
+unittest {
+    @safe pure nothrow
+    void runTest() {
+        HashMap!(int, string) map;
+
+        @nogc @safe pure nothrow
+        void runNoGCPart1(typeof(map) map) {
+            assert(map.length == 0);
+            assert(map.empty);
+
+            if (map) {
+                assert(false, "cast(bool) failed for an empty map");
+            }
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart2(typeof(map) map) {
+            assert(map.length == 1);
+            assert(!map.empty);
+
+            if (!map) {
+                assert(false, "cast(bool) failed for an non-empty map");
+            }
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart3(typeof(map) map) {
+            assert(map.length == 0);
+            assert(map.empty);
+
+            if (map) {
+                assert(false, "cast(bool) failed for an empty map");
+            }
+        }
+
+        runNoGCPart1(map);
+        map[1] = "a";
+        runNoGCPart2(map);
+        map.remove(1);
+        runNoGCPart3(map);
+    }
+
+    runTest();
 }
 
 // BUG: The lazy argument here cannot be made to be nothrow, @nogc, etc.

@@ -83,7 +83,17 @@ public:
      */
     @nogc @safe pure nothrow
     @property bool empty() const {
-        return length == 0;
+        return _map.empty;
+    }
+
+    /**
+     * Implement boolean conversion for a set.
+     *
+     * Returns: True if this set is not empty.
+     */
+    @nogc @safe pure nothrow
+    bool opCast(T: bool)() const {
+        return !empty;
     }
 
     /**
@@ -111,7 +121,6 @@ public:
     /**
      * Returns: True if two sets contain all equal values.
      */
-    @nogc @safe pure nothrow
     bool opEquals(U)(const(HashSet!U) otherSet) const
     if (is(U : T) || is(T : U)) {
         static if (is(U : T)) {
@@ -192,17 +201,63 @@ unittest {
     assert(set.length == 0);
 }
 
+// Set cast(bool) for a set
+unittest {
+    @safe pure nothrow
+    void runTest() {
+        HashSet!int set;
+
+        @nogc @safe pure nothrow
+        void runNoGCPart1(typeof(set) set) {
+            if (set) {
+                assert(false, "cast(bool) failed for an empty set");
+            }
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart2(typeof(set) set) {
+            if (!set) {
+                assert(false, "cast(bool) failed for an non-empty set");
+            }
+        }
+
+        @nogc @safe pure nothrow
+        void runNoGCPart3(typeof(set) set) {
+            if (set) {
+                assert(false, "cast(bool) failed for an empty set");
+            }
+        }
+
+        runNoGCPart1(set);
+        set.add(1);
+        runNoGCPart2(set);
+        set.remove(1);
+        runNoGCPart3(set);
+    }
+
+    runTest();
+}
+
 // Test basic equality.
 unittest {
-    HashSet!int leftSet;
-    leftSet.add(2);
-    leftSet.add(3);
+    @safe pure nothrow
+    void runTest() {
+        HashSet!int leftSet;
+        leftSet.add(2);
+        leftSet.add(3);
 
-    HashSet!int rightSet;
-    rightSet.add(2);
-    rightSet.add(3);
+        HashSet!int rightSet;
+        rightSet.add(2);
+        rightSet.add(3);
 
-    assert(leftSet == rightSet);
+        // Test that @nogc works.
+        @nogc @safe pure nothrow
+        void runNoGCPart(typeof(leftSet) leftSet, typeof(rightSet) rightSet) {
+            assert(leftSet == rightSet);
+        }
+    }
+
+    runTest();
 }
 
 // Test implicit conversion equality left to right.
