@@ -119,7 +119,8 @@ private size_t newBucketListSize(size_t currentLength) {
     return currentLength * 2;
 }
 
-private size_t bucketListSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V)[]) bucketList, const(K) key) {
+private size_t bucketListSearch(SearchFor searchFor, K, V)
+(ref const(Entry!(K, V)[]) bucketList, const(K) key) {
     size_t index = computeHash(key) & (bucketList.length - 1);
 
     foreach(j; 1 .. bucketList.length) {
@@ -163,7 +164,8 @@ private size_t bucketListSearch(SearchFor searchFor, K, V)(ref const(Entry!(K, V
 // memcpy is used here because some types have immutable members which cannot
 // be changed, so we have to force them into the array this way.
 @trusted
-private void setEntry(K, V)(ref Entry!(K, V)[] bucketList, size_t index, auto ref K key, auto ref V value) {
+private void setEntry(K, V)(ref Entry!(K, V)[] bucketList,
+size_t index, auto ref K key, auto ref V value) {
     enum valueOffset = alignedSize(K.sizeof);
 
     // Copy the key and value into the entry.
@@ -175,14 +177,16 @@ private void setEntry(K, V)(ref Entry!(K, V)[] bucketList, size_t index, auto re
 
 // Update just the value for an entry.
 @trusted
-private void updateEntryValue(K, V)(ref Entry!(K, V)[] bucketList, size_t index, auto ref V value) {
+private void updateEntryValue(K, V)(ref Entry!(K, V)[] bucketList,
+size_t index, auto ref V value) {
     enum valueOffset = alignedSize(K.sizeof);
 
     memcpy(cast(void*) &bucketList[index] + valueOffset, &value, V.sizeof);
 }
 
 @trusted
-private void zeroEntryValue(K, V)(ref Entry!(K, V)[] bucketList, size_t index) {
+private void zeroEntryValue(K, V)(ref Entry!(K, V)[] bucketList,
+size_t index) {
     enum valueOffset = alignedSize(K.sizeof);
 
     memset(cast(void*) &bucketList[index] + valueOffset, 0, V.sizeof);
@@ -204,7 +208,7 @@ private bool thresholdPassed(size_t length, size_t bucketCount) {
 struct HashMap(K, V) {
     alias ThisType = typeof(this);
 
-    private Entry!(K, V)[] bucketList;
+    private Entry!(K, V)[] _bucketList;
     private size_t _length;
 
     /**
@@ -224,7 +228,7 @@ struct HashMap(K, V) {
         }
 
         if (minimumSize <= minimumBucketListSize / 2) {
-            bucketList = new Entry!(K, V)[](minimumBucketListSize);
+            _bucketList = new Entry!(K, V)[](minimumBucketListSize);
         } else {
             // Find the next largest power of two which will fit this size.
             size_t size = 8;
@@ -233,13 +237,13 @@ struct HashMap(K, V) {
                 size *= 2;
             }
 
-            bucketList = new Entry!(K, V)[](newBucketListSize(size));
+            _bucketList = new Entry!(K, V)[](newBucketListSize(size));
         }
     }
 
     @trusted
     private void copyToBucketList(ref Entry!(K, V)[] newBucketList) const {
-        foreach(ref entry; bucketList) {
+        foreach(ref entry; _bucketList) {
             if (entry._state != EntryState.occupied) {
                 // Skip holes in the container.
                 continue;
@@ -259,13 +263,13 @@ struct HashMap(K, V) {
 
     @trusted
     private void resize(size_t newBucketListLength) in {
-        assert(newBucketListLength > bucketList.length);
+        assert(newBucketListLength > _bucketList.length);
     } body {
         auto newBucketList = new Entry!(K, V)[](newBucketListLength);
 
         copyToBucketList(newBucketList);
 
-        bucketList = newBucketList;
+        _bucketList = newBucketList;
     }
 
     /**
@@ -276,32 +280,33 @@ struct HashMap(K, V) {
      *     value = A value to set in the map.
      */
     void opIndexAssign(V value, K key) {
-        if (bucketList.length == 0) {
+        if (_bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (bucketList.length - 1);
+            size_t index = computeHash(key) & (_bucketList.length - 1);
 
-            bucketList.setEntry(index, key, value);
+            _bucketList.setEntry(index, key, value);
 
             return;
         }
 
-        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+        size_t index =
+            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
 
-        if (bucketList[index]._state != EntryState.occupied) {
+        if (_bucketList[index]._state != EntryState.occupied) {
             // This slot is not occupied, so insert the entry here.
-            bucketList.setEntry(index, key, value);
+            _bucketList.setEntry(index, key, value);
             ++_length;
 
-            if (thresholdPassed(_length, bucketList.length)) {
+            if (thresholdPassed(_length, _bucketList.length)) {
                 // Resize the bucketList, as it passed the threshold.
-                resize(newBucketListSize(bucketList.length));
+                resize(newBucketListSize(_bucketList.length));
             }
         } else {
             // We have this key already, so update the value.
-            bucketList.updateEntryValue(index, value);
+            _bucketList.updateEntryValue(index, value);
         }
     }
 
@@ -318,13 +323,14 @@ struct HashMap(K, V) {
      *     A pointer to a value, a null pointer if a value is not set.
      */
     inout(V)* opBinaryRight(string op)(K key) inout if (op == "in") {
-        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+        size_t index =
+            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
 
-        if (bucketList[index]._state == EntryState.empty) {
+        if (_bucketList[index]._state == EntryState.empty) {
             return null;
         }
 
-        return &(bucketList[index]._value);
+        return &(_bucketList[index]._value);
     }
 
     /**
@@ -339,14 +345,15 @@ struct HashMap(K, V) {
      *     A value from the map.
      */
     ref inout(V) opIndex(K key) inout {
-        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+        size_t index =
+            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
 
         assert(
-            bucketList[index]._state != EntryState.empty,
+            _bucketList[index]._state != EntryState.empty,
             "Key not found in HashMap!"
         );
 
-        return bucketList[index]._value;
+        return _bucketList[index]._value;
     }
 
     /**
@@ -361,13 +368,14 @@ struct HashMap(K, V) {
      *     A value from the map, or the default value.
      */
     V get(V2)(K key, lazy V2 def) const if(is(V2 : V)) {
-        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+        size_t index =
+            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
 
-        if (bucketList[index]._state == EntryState.empty) {
+        if (_bucketList[index]._state == EntryState.empty) {
             return def();
         }
 
-        return bucketList[index]._value;
+        return _bucketList[index]._value;
     }
 
     /**
@@ -381,13 +389,14 @@ struct HashMap(K, V) {
      *     A value from the map, or the default value.
      */
     inout(V) get(K key) inout {
-        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+        size_t index =
+            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
 
-        if (bucketList[index]._state == EntryState.empty) {
+        if (_bucketList[index]._state == EntryState.empty) {
             return V.init;
         }
 
-        return bucketList[index]._value;
+        return _bucketList[index]._value;
     }
 
     /**
@@ -408,41 +417,43 @@ struct HashMap(K, V) {
      *     A reference to the value in the map.
      */
     ref V setDefault(V2)(K key, lazy V2 value) if (is(V2 : V)) {
-        if (bucketList.length == 0) {
+        if (_bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (bucketList.length - 1);
+            size_t index = computeHash(key) & (_bucketList.length - 1);
 
-            bucketList.setEntry(
+            _bucketList.setEntry(
                 index,
                 key,
                 V.init
             );
 
-            return bucketList[index].value;
+            return _bucketList[index].value;
         }
 
-        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+        size_t index =
+            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
 
-        if (bucketList[index]._state == EntryState.empty) {
+        if (_bucketList[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            bucketList.setEntry(index, key, value());
+            _bucketList.setEntry(index, key, value());
 
             ++_length;
 
-            if (thresholdPassed(_length, bucketList.length)) {
+            if (thresholdPassed(_length, _bucketList.length)) {
                 // Resize the bucketList, as it passed the threshold.
-                resize(newBucketListSize(bucketList.length));
+                resize(newBucketListSize(_bucketList.length));
 
                 // Update the index, it has now changed.
-                index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+                index = bucketListSearch!(SearchFor.notDeleted, K, V)
+                    (_bucketList, key);
             }
         }
 
         // Return a reference to the value.
-        return bucketList[index]._value;
+        return _bucketList[index]._value;
     }
 
     /**
@@ -461,41 +472,43 @@ struct HashMap(K, V) {
      *     A reference to the value in the map.
      */
     ref V setDefault(K key) {
-        if (bucketList.length == 0) {
+        if (_bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (bucketList.length - 1);
+            size_t index = computeHash(key) & (_bucketList.length - 1);
 
-            bucketList.setEntry(
+            _bucketList.setEntry(
                 index,
                 key,
                 V.init
             );
 
-            return bucketList[index].value;
+            return _bucketList[index].value;
         }
 
-        size_t index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+        size_t index =
+            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
 
-        if (bucketList[index]._state == EntryState.empty) {
+        if (_bucketList[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            bucketList.setEntry(index, key, V.init);
+            _bucketList.setEntry(index, key, V.init);
 
             ++_length;
 
-            if (thresholdPassed(_length, bucketList.length)) {
+            if (thresholdPassed(_length, _bucketList.length)) {
                 // Resize the bucketList, as it passed the threshold.
-                resize(newBucketListSize(bucketList.length));
+                resize(newBucketListSize(_bucketList.length));
 
                 // Update the index, it has now changed.
-                index = bucketListSearch!(SearchFor.notDeleted, K, V)(bucketList, key);
+                index = bucketListSearch!(SearchFor.notDeleted, K, V)
+                    (_bucketList, key);
             }
         }
 
         // Return a reference to the value.
-        return bucketList[index]._value;
+        return _bucketList[index]._value;
     }
 
     /**
@@ -508,16 +521,17 @@ struct HashMap(K, V) {
      *     true if a value was removed, otherwise false.
      */
     bool remove(K key) {
-        size_t index = bucketListSearch!(SearchFor.any, K, V)(bucketList, key);
+        size_t index =
+            bucketListSearch!(SearchFor.any, K, V)(_bucketList, key);
 
-        if (bucketList[index]._state == EntryState.occupied) {
+        if (_bucketList[index]._state == EntryState.occupied) {
             --_length;
 
             // Zero the value and mark the slot as 'deleted', which is
             // treated often the same as 'empty', only we can skip over
             // deleted values to search for more values.
-            bucketList.zeroEntryValue(index);
-            bucketList[index]._state = EntryState.deleted;
+            _bucketList.zeroEntryValue(index);
+            _bucketList[index]._state = EntryState.deleted;
 
             return true;
         }
@@ -553,7 +567,7 @@ struct HashMap(K, V) {
             auto newMap = HashMap!(K, V)(_length);
             newMap._length = _length;
 
-            copyToBucketList(newMap.bucketList);
+            copyToBucketList(newMap._bucketList);
 
             return newMap;
         }
@@ -574,7 +588,7 @@ struct HashMap(K, V) {
             return false;
         }
 
-        foreach(ref entry; bucketList) {
+        foreach(ref entry; _bucketList) {
             if (entry._state != EntryState.occupied) {
                 // Skip holes in the container.
                 continue;
@@ -582,9 +596,9 @@ struct HashMap(K, V) {
 
             size_t index =
                 bucketListSearch!(SearchFor.notDeleted, K, V)
-                (otherMap.bucketList, entry._key);
+                (otherMap._bucketList, entry._key);
 
-            if (otherMap.bucketList[index]._state == EntryState.empty) {
+            if (otherMap._bucketList[index]._state == EntryState.empty) {
                 return false;
             }
         }
@@ -599,11 +613,11 @@ struct HashMap(K, V) {
 }
 
 template HashMapKeyType(T) {
-    alias HashMapKeyType = typeof(ElementType!(typeof(T.bucketList))._key);
+    alias HashMapKeyType = typeof(ElementType!(typeof(T._bucketList))._key);
 }
 
 template HashMapValueType(T) {
-    alias HashMapValueType = typeof(ElementType!(typeof(T.bucketList))._value);
+    alias HashMapValueType = typeof(ElementType!(typeof(T._bucketList))._value);
 }
 
 // Check setting values, retrieval, removal, and lengths.
@@ -705,7 +719,7 @@ unittest {
 unittest {
     auto map = HashMap!(int, string)(3);
 
-    assert(map.bucketList.length == minimumBucketListSize);
+    assert(map._bucketList.length == minimumBucketListSize);
 }
 
 // Test the 'in' operator.
@@ -989,7 +1003,7 @@ auto byKeyValue(K, V)(auto ref HashMap!(K, V) map) {
         return KeyValueRange!(K, V).init;
     }
 
-    return KeyValueRange!(K, V)(map.bucketList);
+    return KeyValueRange!(K, V)(map._bucketList);
 }
 
 /// ditto
@@ -1004,7 +1018,7 @@ auto byKeyValue(K, V)(auto ref const(HashMap!(K, V)) map) {
 
     return KeyValueRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucketList
+        map._bucketList
     );
 }
 
@@ -1020,7 +1034,7 @@ auto byKeyValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
 
     return KeyValueRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucketList
+        map._bucketList
     );
 }
 
@@ -1131,7 +1145,7 @@ auto byKey(K, V)(auto ref HashMap!(K, V) map) {
         return KeyRange!(K, V).init;
     }
 
-    return KeyRange!(K, V)(map.bucketList);
+    return KeyRange!(K, V)(map._bucketList);
 }
 
 /// ditto
@@ -1146,7 +1160,7 @@ auto byKey(K, V)(auto ref const(HashMap!(K, V)) map) {
 
     return KeyRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucketList
+        map._bucketList
     );
 }
 
@@ -1162,7 +1176,7 @@ auto byKey(K, V)(auto ref immutable(HashMap!(K, V)) map) {
 
     return KeyRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucketList
+        map._bucketList
     );
 }
 
@@ -1250,7 +1264,7 @@ auto byValue(K, V)(auto ref HashMap!(K, V) map) {
         return ValueRange!(K, V).init;
     }
 
-    return ValueRange!(K, V)(map.bucketList);
+    return ValueRange!(K, V)(map._bucketList);
 }
 
 /// ditto
@@ -1265,7 +1279,7 @@ auto byValue(K, V)(auto ref const(HashMap!(K, V)) map) {
 
     return ValueRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucketList
+        map._bucketList
     );
 }
 
@@ -1281,7 +1295,7 @@ auto byValue(K, V)(auto ref immutable(HashMap!(K, V)) map) {
 
     return ValueRange!(RealK, RealV)(
         cast(Entry!(RealK, RealV)[])
-        map.bucketList
+        map._bucketList
     );
 }
 
@@ -1298,7 +1312,7 @@ unittest {
         valueList ~= value;
     }
 
-    // From the way the bucketLists are distributed, we know we'll get this back.
+    // From the way the buckets are distributed, we know we'll get this back.
     assert(valueList == ["a", "b", "c"]);
 }
 
