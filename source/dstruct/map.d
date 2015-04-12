@@ -6,6 +6,7 @@ import core.exception;
 import core.stdc.string: memcpy, memset;
 
 import std.range : ElementType;
+import std.traits : Unqual;
 
 import dstruct.support;
 
@@ -205,7 +206,8 @@ private bool thresholdPassed(size_t length, size_t bucketCount) {
  *
  * An empty map will be a valid object, and will not result in any allocations.
  */
-struct HashMap(K, V) {
+struct HashMap(K, V)
+if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
     alias ThisType = typeof(this);
 
     private Entry!(K, V)[] _bucketList;
@@ -636,6 +638,17 @@ template HashMapKeyType(T) {
 
 template HashMapValueType(T) {
     alias HashMapValueType = typeof(ElementType!(typeof(T._bucketList))._value);
+}
+
+// Test that is is not possible to create a map with a key or a value type
+// which cannot be copy-assigned.
+unittest {
+    struct NonCopyable { @disable this(this); }
+
+    assert(!__traits(compiles, HashMap!(NonCopyable, int)));
+    assert(__traits(compiles, HashMap!(NonCopyable*, int)));
+    assert(!__traits(compiles, HashMap!(int, NonCopyable)));
+    assert(__traits(compiles, HashMap!(int, NonCopyable*)));
 }
 
 // Check setting values, retrieval, removal, and lengths.

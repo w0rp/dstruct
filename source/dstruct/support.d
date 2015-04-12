@@ -15,3 +15,12 @@ template isDupable(T) {
         // Implicit conversion from const to non-const is allowed.
         is(const(Unqual!T) : Unqual!T);
 }
+
+enum isAssignmentCopyable(T) = is(typeof(
+    (inout int _ = 0) {
+        T value = T.init;
+
+        T value2 = value;
+    }
+));
+

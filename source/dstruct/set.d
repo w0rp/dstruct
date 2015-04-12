@@ -4,6 +4,8 @@
  */
 module dstruct.set;
 
+import std.traits : Unqual;
+
 import dstruct.support;
 import dstruct.map;
 
@@ -12,7 +14,7 @@ import dstruct.map;
  *
  * Because this type is a struct, it can never be null.
  */
-struct HashSet(T) {
+struct HashSet(T) if (isAssignmentCopyable!(Unqual!T)) {
 private:
     HashMap!(T, void[0]) _map;
 public:
@@ -153,6 +155,15 @@ public:
             return newSet;
         }
     }
+}
+
+// Test that is is not possible to create a set with an element type which
+// cannot be copy assigned.
+unittest {
+    struct NonCopyable { @disable this(this); }
+
+    assert(!__traits(compiles, HashSet!NonCopyable));
+    assert(__traits(compiles, HashSet!int));
 }
 
 // Test add and in.
@@ -331,4 +342,3 @@ unittest {
     assert(3 in set);
     assert(4 in set);
 }
-
