@@ -35,6 +35,11 @@ public:
     in {
         assert(value !is null, "A null value was given to Some.");
     } body {
+        static assert(
+            !is(U == typeof(null)),
+            "Some!(" ~ T.stringof ~ ") cannot be constructed with null."
+        );
+
         _value = value;
     }
 
@@ -62,6 +67,11 @@ public:
     in {
         assert(value !is null, "A null value was given to Some.");
     } body {
+        static assert(
+            !is(U == typeof(null)),
+            "Some!(" ~ T.stringof ~ ") cannot be assigned to with null."
+        );
+
         _value = value;
     }
 
@@ -78,7 +88,7 @@ public:
  * Returns: The value wrapped in a non-nullable type.
  */
 @nogc @safe pure nothrow
-inout(Some!T) some(T)(inout(T) value) {
+inout(Some!T) some(T)(inout(T) value) if (is(T == class) || isPointer!T) {
     return inout(Some!T)(value);
 }
 
@@ -309,7 +319,7 @@ public:
  * Returns: The value wrapped in an option type.
  */
 @nogc @safe pure nothrow
-inout(Option!T) option(T)(inout(T) value) {
+inout(Option!T) option(T)(inout(T) value) if (is(T == class) || isPointer!T) {
     return inout(Option!T)(value);
 }
 

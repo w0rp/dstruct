@@ -5,7 +5,7 @@ import std.traits;
 // Define a do-nothing nogc attribute so @nogc can be used,
 // but functions tagged with it will still compile in
 // older D compiler versions.
-static if(__VERSION__ < 2066) { enum nogc = 1; }
+static if (__VERSION__ < 2066) { enum nogc = 1; }
 
 /**
  * true if a type T can be duplicated through some means.
