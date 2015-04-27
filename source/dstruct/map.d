@@ -6,17 +6,17 @@ import core.exception;
 import core.stdc.string: memcpy, memset;
 
 import std.range : ElementType;
-import std.traits : Unqual;
+import std.traits : Unqual, isPointer;
 
 import dstruct.support;
 
-private enum EntryState: ubyte {
+private enum EntryState {
     empty = 0,
     occupied = 1,
     deleted = 2,
 }
 
-private enum SearchFor: ubyte {
+private enum SearchFor {
     empty = 1,
     occupied = 2,
     deleted = 4,
@@ -44,6 +44,7 @@ private enum isHashIdentical(T) =
     | is(T : char)
     | is(T : wchar)
     | is(T : dchar)
+    | isPointer!T
     | (is64Bit && is(T : ulong));
 
 /**
@@ -53,16 +54,12 @@ private enum isHashIdentical(T) =
  */
 struct Entry(K, V) {
 private:
-    static if(is64Bit) {
-        align(8):
-        K _key;
-        V _value;
-        EntryState _state = EntryState.empty;
-    } else {
-        align(4):
-        K _key;
-        V _value;
-        EntryState _state = EntryState.empty;
+    K _key;
+    V _value;
+    EntryState _state = EntryState.empty;
+
+    static if (!isHashIdentical!K) {
+        size_t _hash;
     }
 public:
     /**
@@ -93,24 +90,14 @@ static if(__VERSION__ < 2066) {
 }
 
 @nogc @trusted pure nothrow
-private size_t computeHash(K)(ref K key) {
-    static if (isHashIdentical!K) {
-        return cast(size_t) key;
-    } else {
-        // Cast so we can keep our function qualifiers.
-        return (cast(SafeGetHashType) &(typeid(K).getHash))(&key);
-    }
+private size_t computeHash(K)(ref K key) if (!isHashIdentical!K) {
+    // Cast so we can keep our function qualifiers.
+    return (cast(SafeGetHashType) &(typeid(K).getHash))(&key);
 }
 
-// Check that computeHash is doing the right thing.
-unittest {
-    int x = 1;
-    int y = 2;
-    int z = 3;
-
-    assert(computeHash(x) == 1);
-    assert(computeHash(y) == 2);
-    assert(computeHash(z) == 3);
+@nogc @trusted pure nothrow
+private size_t castHash(K)(K key) if (isHashIdentical!K) {
+    return cast(size_t) key;
 }
 
 private enum size_t minimumBucketListSize = 8;
@@ -120,9 +107,11 @@ private size_t newBucketListSize(size_t currentLength) {
     return currentLength * 2;
 }
 
+@trusted
 private size_t bucketListSearch(SearchFor searchFor, K, V)
-(ref const(Entry!(K, V)[]) bucketList, const(K) key) {
-    size_t index = computeHash(key) & (bucketList.length - 1);
+(ref const(Entry!(K, V)[]) bucketList, const(K) key)
+if (isHashIdentical!K) {
+    size_t index = castHash(key) & (bucketList.length - 1);
 
     foreach(j; 1 .. bucketList.length) {
         static if (searchFor == SearchFor.notOccupied) {
@@ -161,6 +150,53 @@ private size_t bucketListSearch(SearchFor searchFor, K, V)
     assert(false, "Slot not found!");
 }
 
+@trusted
+private size_t bucketListSearch(SearchFor searchFor, K, V)
+(ref const(Entry!(K, V)[]) bucketList, size_t hash, const(K) key)
+if (!isHashIdentical!K) {
+    size_t index = hash & (bucketList.length - 1);
+
+    foreach(j; 1 .. bucketList.length) {
+        static if (searchFor == SearchFor.notOccupied) {
+            if (bucketList[index]._state != EntryState.occupied) {
+                return index;
+            }
+
+            if (bucketList[index]._hash == hash
+            && bucketList[index]._key == key) {
+                return index;
+            }
+        } else {
+            static if (searchFor & SearchFor.empty) {
+                if (bucketList[index]._state == EntryState.empty) {
+                    return index;
+                }
+            }
+
+            static if (searchFor & SearchFor.deleted) {
+                if (bucketList[index]._state == EntryState.deleted
+                && bucketList[index]._hash == hash
+                && bucketList[index]._key == key) {
+                    return index;
+                }
+
+            }
+
+            static if (searchFor & SearchFor.occupied) {
+                if (bucketList[index]._state == EntryState.occupied
+                && bucketList[index]._hash == hash
+                && bucketList[index]._key == key) {
+                    return index;
+                }
+            }
+        }
+
+        index = (index + j) & (bucketList.length - 1);
+    }
+
+    assert(false, "Slot not found!");
+}
+
 // Add an entry into the bucket list.
 // memcpy is used here because some types have immutable members which cannot
 // be changed, so we have to force them into the array this way.
@@ -173,6 +209,19 @@ size_t index, auto ref K key, auto ref V value) {
     memcpy(cast(void*) &bucketList[index], &key, K.sizeof);
     memcpy(cast(void*) &bucketList[index] + valueOffset, &value, V.sizeof);
 
+    bucketList[index]._state = EntryState.occupied;
+}
+
+@nogc @trusted pure nothrow
+private void setEntry(K, V)(ref Entry!(K, V)[] bucketList,
+size_t index, size_t hash, auto ref K key, auto ref V value) {
+    enum valueOffset = alignedSize(K.sizeof);
+
+    // Copy the key and value into the entry.
+    memcpy(cast(void*) &bucketList[index], &key, K.sizeof);
+    memcpy(cast(void*) &bucketList[index] + valueOffset, &value, V.sizeof);
+
+    bucketList[index]._hash = hash;
     bucketList[index]._state = EntryState.occupied;
 }
 
@@ -251,15 +300,28 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
                 continue;
             }
 
-            size_t index =
-                bucketListSearch!(SearchFor.empty, K, V)
-                (newBucketList, cast(K) entry._key);
+            static if (isHashIdentical!K) {
+                size_t index =
+                    bucketListSearch!(SearchFor.empty, K, V)
+                    (newBucketList, cast(K) entry._key);
 
-            newBucketList.setEntry(
-                index,
-                cast(K) entry._key,
-                cast(V) entry._value
-            );
+                newBucketList.setEntry(
+                    index,
+                    cast(K) entry._key,
+                    cast(V) entry._value
+                );
+            } else {
+                size_t index =
+                    bucketListSearch!(SearchFor.empty, K, V)
+                    (newBucketList, entry._hash, cast(K) entry._key);
+
+                newBucketList.setEntry(
+                    index,
+                    entry._hash,
+                    cast(K) entry._key,
+                    cast(V) entry._value
+                );
+            }
         }
     }
 
@@ -282,24 +344,46 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     value = A value to set in the map.
      */
     void opIndexAssign(V value, K key) {
+        static if (!isHashIdentical!K) {
+            size_t hash = computeHash(key);
+        }
+
         if (_bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (_bucketList.length - 1);
+            static if (isHashIdentical!K) {
+                size_t index = castHash(key) & (_bucketList.length - 1);
 
-            _bucketList.setEntry(index, key, value);
+                _bucketList.setEntry(index, key, value);
+            } else {
+                size_t index = hash & (_bucketList.length - 1);
+
+                _bucketList.setEntry(index, hash, key, value);
+            }
 
             return;
         }
 
-        size_t index =
-            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
+        static if (isHashIdentical!K) {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, key);
+        } else {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, hash, key);
+        }
 
         if (_bucketList[index]._state != EntryState.occupied) {
             // This slot is not occupied, so insert the entry here.
-            _bucketList.setEntry(index, key, value);
+            static if (isHashIdentical!K) {
+                _bucketList.setEntry(index, key, value);
+            } else {
+                _bucketList.setEntry(index, hash, key, value);
+            }
+
             ++_length;
 
             if (thresholdPassed(_length, _bucketList.length)) {
@@ -325,8 +409,15 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     A pointer to a value, a null pointer if a value is not set.
      */
     inout(V)* opBinaryRight(string op)(K key) inout if (op == "in") {
-        size_t index =
-            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
+        static if (isHashIdentical!K) {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, key);
+        } else {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, computeHash(key), key);
+        }
 
         if (_bucketList[index]._state == EntryState.empty) {
             return null;
@@ -347,8 +438,15 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     A value from the map.
      */
     ref inout(V) opIndex(K key) inout {
-        size_t index =
-            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
+        static if (isHashIdentical!K) {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, key);
+        } else {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, computeHash(key), key);
+        }
 
         assert(
             _bucketList[index]._state != EntryState.empty,
@@ -370,8 +468,15 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     A value from the map, or the default value.
      */
     V get(V2)(K key, lazy V2 def) const if(is(V2 : V)) {
-        size_t index =
-            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
+        static if (isHashIdentical!K) {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, key);
+        } else {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, computeHash(key), key);
+        }
 
         if (_bucketList[index]._state == EntryState.empty) {
             return def();
@@ -391,8 +496,16 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     A value from the map, or the default value.
      */
     inout(V) get(K key) inout {
-        size_t index =
-            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
+        static if (isHashIdentical!K) {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, key);
+        } else {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, computeHash(key), key);
+        }
+
 
         if (_bucketList[index]._state == EntryState.empty) {
             return V.init;
@@ -419,28 +532,45 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     A reference to the value in the map.
      */
     ref V setDefault(V2)(K key, lazy V2 value) if (is(V2 : V)) {
+        static if (!isHashIdentical!K) {
+            size_t hash = computeHash(key);
+        }
+
         if (_bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (_bucketList.length - 1);
+            static if (isHashIdentical!K) {
+                size_t index = castHash(key) & (_bucketList.length - 1);
 
-            _bucketList.setEntry(
-                index,
-                key,
-                V.init
-            );
+                _bucketList.setEntry(index, key, V.init);
+            } else {
+                size_t index = hash & (_bucketList.length - 1);
+
+                _bucketList.setEntry(index, hash, key, V.init);
+            }
 
             return _bucketList[index].value;
         }
 
-        size_t index =
-            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
+        static if (isHashIdentical!K) {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, key);
+        } else {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, hash, key);
+        }
 
         if (_bucketList[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            _bucketList.setEntry(index, key, value());
+            static if (isHashIdentical!K) {
+                _bucketList.setEntry(index, key, value());
+            } else {
+                _bucketList.setEntry(index, hash, key, value());
+            }
 
             ++_length;
 
@@ -449,8 +579,13 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
                 resize(newBucketListSize(_bucketList.length));
 
                 // Update the index, it has now changed.
-                index = bucketListSearch!(SearchFor.notDeleted, K, V)
-                    (_bucketList, key);
+                static if (isHashIdentical!K) {
+                    index = bucketListSearch!(SearchFor.notDeleted, K, V)
+                        (_bucketList, key);
+                } else {
+                    index = bucketListSearch!(SearchFor.notDeleted, K, V)
+                        (_bucketList, hash, key);
+                }
             }
         }
 
@@ -474,28 +609,45 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     A reference to the value in the map.
      */
     ref V setDefault(K key) {
+        static if (!isHashIdentical!K) {
+            size_t hash = computeHash(key);
+        }
+
         if (_bucketList.length == 0) {
             // 0 length is a special case.
             _length = 1;
             resize(minimumBucketListSize);
 
-            size_t index = computeHash(key) & (_bucketList.length - 1);
+            static if (isHashIdentical!K) {
+                size_t index = castHash(key) & (_bucketList.length - 1);
 
-            _bucketList.setEntry(
-                index,
-                key,
-                V.init
-            );
+                _bucketList.setEntry(index, key, V.init);
+            } else {
+                size_t index = hash & (_bucketList.length - 1);
+
+                _bucketList.setEntry(index, hash, key, V.init);
+            }
 
             return _bucketList[index].value;
         }
 
-        size_t index =
-            bucketListSearch!(SearchFor.notDeleted, K, V)(_bucketList, key);
+        static if (isHashIdentical!K) {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, key);
+        } else {
+            size_t index =
+                bucketListSearch!(SearchFor.notDeleted, K, V)
+                (_bucketList, hash, key);
+        }
 
         if (_bucketList[index]._state == EntryState.empty) {
             // The entry is empty, so we can insert the value here.
-            _bucketList.setEntry(index, key, V.init);
+            static if (isHashIdentical!K) {
+                _bucketList.setEntry(index, key, V.init);
+            } else {
+                _bucketList.setEntry(index, hash, key, V.init);
+            }
 
             ++_length;
 
@@ -504,8 +656,13 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
                 resize(newBucketListSize(_bucketList.length));
 
                 // Update the index, it has now changed.
-                index = bucketListSearch!(SearchFor.notDeleted, K, V)
-                    (_bucketList, key);
+                static if (isHashIdentical!K) {
+                    index = bucketListSearch!(SearchFor.notDeleted, K, V)
+                        (_bucketList, key);
+                } else {
+                    index = bucketListSearch!(SearchFor.notDeleted, K, V)
+                        (_bucketList, hash, key);
+                }
             }
         }
 
@@ -523,8 +680,15 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     true if a value was removed, otherwise false.
      */
     bool remove(K key) {
-        size_t index =
-            bucketListSearch!(SearchFor.any, K, V)(_bucketList, key);
+        static if (isHashIdentical!K) {
+            size_t index =
+                bucketListSearch!(SearchFor.any, K, V)
+                (_bucketList, key);
+        } else {
+            size_t index =
+                bucketListSearch!(SearchFor.any, K, V)
+                (_bucketList, computeHash(key), key);
+        }
 
         if (_bucketList[index]._state == EntryState.occupied) {
             --_length;
@@ -614,9 +778,15 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
                 continue;
             }
 
-            size_t index =
-                bucketListSearch!(SearchFor.notDeleted, K, V)
-                (otherMap._bucketList, entry._key);
+            static if (isHashIdentical!K) {
+                size_t index =
+                    bucketListSearch!(SearchFor.notDeleted, K, V)
+                    (otherMap._bucketList, entry._key);
+            } else {
+                size_t index =
+                    bucketListSearch!(SearchFor.notDeleted, K, V)
+                    (otherMap._bucketList, entry._hash, entry._key);
+            }
 
             if (otherMap._bucketList[index]._state == EntryState.empty) {
                 return false;
