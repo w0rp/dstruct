@@ -409,6 +409,9 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     A pointer to a value, a null pointer if a value is not set.
      */
     inout(V)* opBinaryRight(string op)(K key) inout if (op == "in") {
+        if (_bucketList.length == 0)
+            return null;
+
         static if (isHashIdentical!K) {
             size_t index =
                 bucketListSearch!(SearchFor.notDeleted, K, V)
@@ -468,6 +471,9 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     A value from the map, or the default value.
      */
     V get(V2)(K key, lazy V2 def) const if(is(V2 : V)) {
+        if (_bucketList.length == 0)
+            return def;
+
         static if (isHashIdentical!K) {
             size_t index =
                 bucketListSearch!(SearchFor.notDeleted, K, V)
@@ -680,6 +686,9 @@ if(isAssignmentCopyable!(Unqual!K) && isAssignmentCopyable!(Unqual!V)) {
      *     true if a value was removed, otherwise false.
      */
     bool remove(K key) {
+        if (_bucketList.length == 0)
+            return false;
+
         static if (isHashIdentical!K) {
             size_t index =
                 bucketListSearch!(SearchFor.any, K, V)
@@ -1170,6 +1179,14 @@ unittest {
     assert(map.length == 2);
 
     assert(map[2] == 4);
+}
+
+// Test operations work with empty map (issue #3).
+unittest {
+    HashMap!(int, string) emptyMap;
+    assert(0 !in emptyMap);
+    assert(!emptyMap.remove(0));
+    assert(emptyMap.get(0, "a") == "a");
 }
 
 /**
